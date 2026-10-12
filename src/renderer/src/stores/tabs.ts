@@ -12,6 +12,20 @@ export const useTabs = defineStore('tabs', () => {
   const active = ref(0)
   const workspaces = ref<Workspace[]>([])
   const views = new Map<string, View>()
+  let seq = 0 // newest tab action; older ones don't touch the highlight when they finish late
+
+  // The highlight follows the repository actually shown; with nothing shown it stays put. A
+  // repository whose tab is gone (its replacement failed to open) is not shown any more.
+  function syncActive() {
+    const shown = repo.info?.path
+    const i = shown ? tabs.value.indexOf(shown) : -1
+    if (i !== -1) active.value = i
+    else if (shown) {
+      const error = repo.error
+      repo.close()
+      repo.error = error
+    }
+  }
 
   // IPC structured-clones arguments; Vue's reactive proxies can't be cloned, so send plain copies.
   const persist = () => window.gitspynx.saveTabs([...tabs.value], active.value)
@@ -23,15 +37,20 @@ export const useTabs = defineStore('tabs', () => {
     if (tabs.value.length) return // the user opened something while the session was loading
     tabs.value = s.tabs
     active.value = s.active
+    const my = ++seq
     if (tabs.value.length) await repo.open(tabs.value[active.value])
+    if (my === seq) syncActive()
   }
 
   async function activate(index: number) {
     const path = tabs.value[index]
     if (!path || (index === active.value && repo.info?.path === path)) return
     remember()
-    active.value = index
+    const my = ++seq
+    if (!repo.info) active.value = index // nothing shown: highlight the tab being opened
     await repo.open(path, 0, views.get(path))
+    if (my !== seq) return
+    syncActive()
     await persist()
   }
 
@@ -40,11 +59,11 @@ export const useTabs = defineStore('tabs', () => {
     const existing = tabs.value.indexOf(path)
     if (existing !== -1) return activate(existing)
     remember()
+    const my = ++seq
     await repo.open(path)
-    if (repo.error || !repo.info) return
-    const index = tabs.value.indexOf(repo.info.path)
-    if (index === -1) tabs.value = [...tabs.value, repo.info.path]
-    active.value = index === -1 ? tabs.value.length - 1 : index
+    if (my !== seq || repo.error || !repo.info) return
+    if (!tabs.value.includes(repo.info.path)) tabs.value = [...tabs.value, repo.info.path]
+    syncActive()
     await persist()
   }
 
@@ -58,7 +77,9 @@ export const useTabs = defineStore('tabs', () => {
     } else if (index === active.value) {
       active.value = Math.min(index, tabs.value.length - 1)
       const next = tabs.value[active.value]
+      const my = ++seq
       await repo.open(next, 0, views.get(next))
+      if (my === seq) syncActive()
     } else if (index < active.value) {
       active.value--
     }
@@ -77,7 +98,9 @@ export const useTabs = defineStore('tabs', () => {
     remember()
     tabs.value = [...ws.repos]
     active.value = 0
+    const my = ++seq
     if (tabs.value.length) await repo.open(tabs.value[0], 0, views.get(tabs.value[0]))
+    if (my === seq) syncActive()
     await persist()
   }
 

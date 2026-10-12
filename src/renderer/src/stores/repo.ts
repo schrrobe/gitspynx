@@ -25,7 +25,9 @@ export const useRepo = defineStore('repo', () => {
   const status = ref<FileStatus[]>([])
   const diffTarget = shallowRef<DiffTarget | null>(null) // shallow: identity is compared to drop stale diffs
   const diff = ref<FileDiff | null>(null)
-  const busy = ref<'fetch' | 'pull' | 'push' | null>(null) // running network operation
+  type NetworkKind = 'fetch' | 'pull' | 'push'
+  const busyByPath = shallowRef(new Map<string, NetworkKind>()) // running network operation per repo
+  const busy = computed(() => (info.value && busyByPath.value.get(info.value.path)) || null)
   const conflict = shallowRef<{ path: string; versions: ConflictVersions } | null>(null)
   const hidden = shallowRef(new Set<string>()) // fullNames of refs whose history is hidden
   const solo = ref<string | null>(null) // fullName of the only ref shown
@@ -56,13 +58,13 @@ export const useRepo = defineStore('repo', () => {
   }
 
   // undefined = the whole snapshot; otherwise the tips that remain visible under the filters
-  function tipsFor(repo: RepoInfo): string[] | undefined {
-    if (solo.value) {
-      const r = repo.refs.find((x) => x.fullName === solo.value)
+  function tipsFor(repo: RepoInfo, hiddenRefs = hidden.value, soloRef = solo.value): string[] | undefined {
+    if (soloRef) {
+      const r = repo.refs.find((x) => x.fullName === soloRef)
       if (r) return [r.target]
     }
-    if (!hidden.value.size) return undefined
-    const visible = new Set(repo.refs.filter((r) => r.kind !== 'stash' && !hidden.value.has(r.fullName)).map((r) => r.target))
+    if (!hiddenRefs.size) return undefined
+    const visible = new Set(repo.refs.filter((r) => r.kind !== 'stash' && !hiddenRefs.has(r.fullName)).map((r) => r.target))
     if (repo.head.sha) visible.add(repo.head.sha)
     return repo.tips.filter((t) => visible.has(t))
   }
@@ -78,16 +80,19 @@ export const useRepo = defineStore('repo', () => {
       loading.value = true
       try {
         const next = await window.gitspynx.openRepo(path)
-        if (next.path !== info.value?.path) {
-          hidden.value = new Set(view?.hidden) // filters belong to the repository they were set in
-          solo.value = view?.solo ?? null
-        }
+        // Filters belong to the repository they were set in; they only become visible once this
+        // load wins, so a tab switched away from meanwhile never remembers another tab's filters.
+        const switching = next.path !== info.value?.path
+        const nextHidden = switching ? new Set(view?.hidden) : hidden.value
+        const nextSolo = switching ? (view?.solo ?? null) : solo.value
         const limit = Math.min(Math.max(PAGE, keepCount), MAX_LOG_PAGE)
         const [first, files] = await Promise.all([
-          window.gitspynx.readLog(next.path, 0, limit, tipsFor(next)),
+          window.gitspynx.readLog(next.path, 0, limit, tipsFor(next, nextHidden, nextSolo)),
           window.gitspynx.readStatus(next.path)
         ])
         if (gen !== generation) return
+        hidden.value = nextHidden
+        solo.value = nextSolo
         const samePath = info.value?.path === next.path
         info.value = next
         commits.value = first
@@ -215,16 +220,21 @@ export const useRepo = defineStore('repo', () => {
   }
 
   // Runs a ref-changing operation, then reloads history. Refused while a network operation runs
-  // (a checkout in the middle of a pull would interleave with it).
-  const mutate = (op: (repo: string) => Promise<void>, partOfNetworkOp = false) =>
-    guard(async () => {
-      if (!info.value || (busy.value && !partOfNetworkOp)) return
-      try {
-        await op(info.value.path)
-      } finally {
-        await refresh()
-      }
-    })
+  // (a checkout in the middle of a pull would interleave with it). Errors and the reload only
+  // apply if the user is still looking at that repository (tabs).
+  async function mutate(op: (repo: string) => Promise<void>, partOfNetworkOp = false) {
+    if (!info.value || (busy.value && !partOfNetworkOp)) return
+    const path = info.value.path
+    error.value = null
+    notice.value = null
+    try {
+      await op(path)
+    } catch (e) {
+      if (info.value?.path === path) report(e)
+    } finally {
+      if (info.value?.path === path) await refresh()
+    }
+  }
 
   const checkoutBranch = (name: string) => mutate((r) => window.gitspynx.checkout(r, name))
 
@@ -255,13 +265,16 @@ export const useRepo = defineStore('repo', () => {
     })
   }
 
-  async function network(kind: 'fetch' | 'pull' | 'push', op: (repo: string) => Promise<void>) {
-    if (busy.value) return
-    busy.value = kind
+  async function network(kind: NetworkKind, op: (repo: string) => Promise<void>) {
+    if (!info.value || busy.value) return
+    const path = info.value.path
+    busyByPath.value = new Map(busyByPath.value).set(path, kind)
     try {
       await mutate(op, true)
     } finally {
-      busy.value = null
+      const next = new Map(busyByPath.value)
+      next.delete(path)
+      busyByPath.value = next
     }
   }
 
@@ -272,7 +285,7 @@ export const useRepo = defineStore('repo', () => {
     network('push', async (r) => {
       if ((await window.gitspynx.push(r, false)) === 'ok') return
       const force = await window.gitspynx.confirm(
-        'Push abgelehnt: Der Remote enthält Commits, die lokal fehlen.',
+        `Push von „${r.split(/[\\/]/).pop()}“ abgelehnt: Der Remote enthält Commits, die lokal fehlen.`,
         'Mit --force-with-lease --force-if-includes überschreiben? Das gelingt nur, wenn alle Remote-Commits bereits in deinem Branch enthalten waren – fremde Commits werden nie überschrieben.',
         'Force-Push'
       )
@@ -286,10 +299,12 @@ export const useRepo = defineStore('repo', () => {
 
   // Merge/rebase/cherry-pick: on conflicts show the working directory where they get resolved.
   async function integrate(op: (repo: string) => Promise<'ok' | 'conflicts'>): Promise<boolean> {
+    const path = info.value?.path
     let result = 'ok' as 'ok' | 'conflicts' // assigned inside the callback
     await mutate(async (r) => void (result = await op(r)))
-    if (result === 'conflicts') await select(WIP)
-    return result === 'conflicts'
+    if (result !== 'conflicts' || info.value?.path !== path) return false
+    await select(WIP)
+    return true
   }
 
   const mergeInto = (rev: string) => integrate((r) => window.gitspynx.merge(r, rev))
@@ -391,6 +406,8 @@ export const useRepo = defineStore('repo', () => {
 
   const close = () => {
     void window.gitspynx.closeRepo()
+    error.value = null
+    notice.value = null
     hidden.value = new Set()
     solo.value = null
     conflict.value = null

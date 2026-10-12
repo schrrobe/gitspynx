@@ -122,4 +122,64 @@ describe('tabs', () => {
     expect(tabs.tabs).toEqual(['/a'])
     expect(tabs.workspaces).toEqual([{ name: 'W', repos: ['/x'] }])
   })
+
+  describe('review 5', () => {
+    const api = () => (globalThis as unknown as { window: { gitspynx: Record<string, unknown> } }).window.gitspynx
+    // readLog for one path waits until released
+    function slowLog(path: string) {
+      let release!: () => void
+      const gate = new Promise<void>((r) => (release = r))
+      const plain = api().readLog as (...a: unknown[]) => Promise<unknown>
+      api().readLog = async (r: string, ...rest: unknown[]) => {
+        if (r === path) await gate
+        return plain(r, ...rest)
+      }
+      return release
+    }
+
+    it('keeps the highlighted tab in line with the shown repo when an older open finishes last', async () => {
+      const tabs = useTabs()
+      await tabs.openPath('/a')
+      await tabs.openPath('/b')
+      const releaseD = slowLog('/d')
+      const releaseA = slowLog('/a')
+      const opening = tabs.openPath('/d')
+      const activating = tabs.activate(0) // /a loads slowly too
+      await new Promise((r) => setTimeout(r, 0))
+      releaseD() // the superseded open finishes while /a is still loading
+      await opening
+      releaseA()
+      await activating
+      expect(useRepo().info?.path).toBe('/a')
+      expect(tabs.tabs[tabs.active]).toBe('/a')
+    })
+
+    it('keeps highlighting the shown repo when activating a broken tab fails', async () => {
+      session = { tabs: ['/a', '/bad'], active: 0, workspaces: [] }
+      const tabs = useTabs()
+      await tabs.restore()
+      await tabs.activate(1)
+      expect(useRepo().info?.path).toBe('/a')
+      expect(tabs.active).toBe(0)
+    })
+
+    it('keeps all restored tabs reachable when the active one cannot be opened', async () => {
+      session = { tabs: ['/a', '/bad', '/c'], active: 1, workspaces: [] }
+      const tabs = useTabs()
+      await tabs.restore()
+      expect(tabs.tabs).toEqual(['/a', '/bad', '/c'])
+      await tabs.activate(2)
+      expect(useRepo().info?.path).toBe('/c')
+      expect(tabs.active).toBe(2)
+    })
+  })
+
+  it('shows no repository without a tab when a workspace\'s first repo cannot be opened', async () => {
+    const tabs = useTabs()
+    await tabs.openPath('/a')
+    await tabs.openWorkspace({ name: 'W', repos: ['/bad', '/c'] })
+    expect(tabs.tabs).toEqual(['/bad', '/c'])
+    expect(useRepo().info).toBeNull() // /a is not a tab any more
+    expect(useRepo().error).toMatch(/not a git repository/)
+  })
 })

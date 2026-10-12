@@ -455,4 +455,43 @@ describe('repo store', () => {
       expect(repo.notice).toMatch(/Stash wurde behalten/)
     })
   })
+
+  describe('review 5', () => {
+    const w = () => (globalThis as unknown as { window: { gitspynx: Record<string, unknown> } }).window
+
+    it('does not expose an incoming tab\'s filters before its history has loaded', async () => {
+      const repo = useRepo()
+      const first = repo.open('/r')
+      await flush()
+      logCalls[0].d.resolve(page('c', 3))
+      await first
+      w().gitspynx.openRepo = async (p: string) => ({ ...info, path: p })
+      const switching = repo.open('/b', 0, { selected: null, hidden: [], solo: 'refs/heads/topic' })
+      await flush()
+      expect(repo.viewState().solo).toBeNull() // still /r's view while /b loads
+      logCalls[1].d.resolve(page('b', 3))
+      await switching
+      expect(repo.solo).toBe('refs/heads/topic')
+    })
+
+    it('scopes a running network operation to its repository', async () => {
+      const repo = useRepo()
+      const first = repo.open('/r')
+      await flush()
+      logCalls[0].d.resolve(page('c', 3))
+      await first
+      const fetch = deferred<void>()
+      w().gitspynx.fetch = () => fetch.promise
+      const running = repo.fetchAll()
+      await flush()
+      expect(repo.busy).toBe('fetch')
+      w().gitspynx.openRepo = async (p: string) => ({ ...info, path: p })
+      w().gitspynx.readLog = async () => page('b', 3)
+      await repo.open('/b')
+      expect(repo.busy).toBeNull() // /b is not busy
+      ;(fetch as unknown as { resolve: (v: unknown) => void }).resolve(Promise.reject(new Error('network down')))
+      await running
+      expect(repo.error).toBeNull() // /r's failure is not shown on /b
+    })
+  })
 })

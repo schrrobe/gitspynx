@@ -63,6 +63,7 @@ async function deleteWorkspace(name: string) {
 </script>
 
 <template>
+  <TabStrip v-if="!repo.info && tabs.tabs.length" class="welcome-tabs" @add="pick" />
   <div v-if="!repo.info" class="welcome">
     <h1>gitspynx</h1>
     <button :disabled="repo.loading" @click="pick">Repository öffnen…</button>
@@ -116,8 +117,9 @@ async function deleteWorkspace(name: string) {
     <Sidebar class="sidebar" />
     <ConflictView v-if="repo.conflict" class="list" />
     <DiffView v-else-if="repo.diffTarget" class="list" />
-    <CommitList v-show="!repo.diffTarget && !repo.conflict" class="list" />
-    <WorkdirPanel v-if="repo.selected === WIP" class="detail" />
+    <!-- keyed per repository: search text, commit drafts and amend state never carry over to another tab -->
+    <CommitList v-show="!repo.diffTarget && !repo.conflict" :key="repo.info.path" class="list" />
+    <WorkdirPanel v-if="repo.selected === WIP" :key="repo.info.path" class="detail" />
     <CommitDetail v-else class="detail" />
   </div>
   <PromptDialog />

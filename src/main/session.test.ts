@@ -1,5 +1,8 @@
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { emptySession, parseSession, withTabs, withWorkspace, withoutWorkspace } from './session'
+import { emptySession, latestOnly, parseSession, sessionFile, withTabs, withWorkspace, withoutWorkspace } from './session'
 
 const allow = (p: string) => p.startsWith('/ok/')
 
@@ -32,5 +35,31 @@ describe('session', () => {
 
   it('rejects an empty or blank workspace name', () => {
     expect(() => withWorkspace(emptySession(), '  ', ['/ok/a'], allow)).toThrow()
+  })
+})
+
+describe('session file', () => {
+  it('serializes overlapping writes atomically and keeps the latest state', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gitspynx-session-'))
+    const file = join(dir, 'session.json')
+    const store = sessionFile(file)
+    await Promise.all(
+      Array.from({ length: 50 }, (_, i) => store.save({ tabs: Array.from({ length: i % 7 }, (_, j) => `/ok/${j}`), active: 0, workspaces: [] }))
+    )
+    const final = { tabs: ['/ok/last'], active: 0, workspaces: [] }
+    await store.save(final)
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual(final)
+    expect(await sessionFile(file).load()).toEqual(final)
+    rmSync(dir, { recursive: true })
+  })
+})
+
+describe('latestOnly', () => {
+  it('tells whether a request is still the newest one', () => {
+    const latest = latestOnly()
+    const a = latest.next()
+    const b = latest.next()
+    expect(latest.isLatest(a)).toBe(false)
+    expect(latest.isLatest(b)).toBe(true)
   })
 })

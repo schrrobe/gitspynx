@@ -34,22 +34,15 @@ import {
   stashPush,
   unstage
 } from './git'
-import { parseSession, withoutWorkspace, withTabs, withWorkspace } from './session'
+import { latestOnly, sessionFile, withoutWorkspace, withTabs, withWorkspace } from './session'
 import { type RepoWatcher, watchRepo } from './watch'
 
 const recentFile = () => join(app.getPath('userData'), 'recent.json')
-const sessionFile = () => join(app.getPath('userData'), 'session.json')
-let session: Session | null = null
-
-async function loadSession(): Promise<Session> {
-  if (!session) session = parseSession(await readFile(sessionFile(), 'utf8').then(JSON.parse, () => null))
-  return session
-}
-
-async function storeSession(next: Session) {
-  session = next
-  await writeFile(sessionFile(), JSON.stringify(next, null, 2))
-}
+let sessionStore: ReturnType<typeof sessionFile> | null = null
+const store = () => (sessionStore ??= sessionFile(join(app.getPath('userData'), 'session.json')))
+const loadSession = () => store().load()
+const storeSession = (next: Session) => store().save(next)
+const opens = latestOnly() // overlapping openRepo calls: only the newest re-targets the watcher
 
 // Paths a session may contain: repos opened this run, or already stored in the session.
 async function knownToSession(): Promise<(path: string) => boolean> {
@@ -177,18 +170,21 @@ const handlers: Handlers = {
   },
   async saveWorkspace(_s, name, repos) {
     if (!Array.isArray(repos)) throw new GitError('invalid argument')
-    await storeSession(withWorkspace(await loadSession(), str(name), repos.map(str), await knownToSession()))
-    return session!
+    const next = withWorkspace(await loadSession(), str(name), repos.map(str), await knownToSession())
+    await storeSession(next)
+    return next
   },
   async deleteWorkspace(_s, name) {
-    await storeSession(withoutWorkspace(await loadSession(), str(name)))
-    return session!
+    const next = withoutWorkspace(await loadSession(), str(name))
+    await storeSession(next)
+    return next
   },
   async openRepo(sender, path) {
+    const request = opens.next()
     const info = await openRepo(await allowedPath(path))
     opened.set(info.path, info.tips)
     await remember(info.path)
-    await watchOpenRepo(info.path, sender)
+    if (opens.isLatest(request)) await watchOpenRepo(info.path, sender)
     return info
   },
   readLog: (_s, repo, skip, limit, tips) => {

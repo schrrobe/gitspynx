@@ -1,6 +1,7 @@
+import { readFile, rename, writeFile } from 'node:fs/promises'
 import type { Session, Workspace } from '../shared/types'
 
-// Open tabs and saved workspaces, persisted as JSON in userData. Pure functions; index.ts does I/O.
+// Open tabs and saved workspaces, persisted as JSON in userData.
 
 export const emptySession = (): Session => ({ tabs: [], active: 0, workspaces: [] })
 
@@ -30,3 +31,33 @@ export function withWorkspace(s: Session, name: string, repos: string[], allowed
 }
 
 export const withoutWorkspace = (s: Session, name: string): Session => ({ ...s, workspaces: s.workspaces.filter((w) => w.name !== name) })
+
+// session.json on disk: one cached load, writes serialized and atomic (temp file + rename), so
+// overlapping saves can neither interleave into invalid JSON nor let an older state win.
+export function sessionFile(file: string) {
+  let loaded: Promise<Session> | null = null
+  let latest: Session | null = null
+  let writing: Promise<void> = Promise.resolve()
+  return {
+    load(): Promise<Session> {
+      loaded ??= readFile(file, 'utf8').then((t) => parseSession(JSON.parse(t)), () => emptySession())
+      return loaded
+    },
+    save(s: Session): Promise<void> {
+      latest = s
+      loaded = Promise.resolve(s)
+      writing = writing.then(async () => {
+        const tmp = `${file}.tmp`
+        await writeFile(tmp, JSON.stringify(latest, null, 2))
+        await rename(tmp, file)
+      })
+      return writing
+    }
+  }
+}
+
+// Request counter: only the newest of overlapping requests may act on its result.
+export function latestOnly() {
+  let n = 0
+  return { next: () => ++n, isLatest: (id: number) => id === n }
+}
