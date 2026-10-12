@@ -22,7 +22,10 @@ async function menu(r: Ref) {
     ...(r.kind === 'local'
       ? [{ id: 'rename', label: 'Umbenennen…' }, { separator: true as const }, { id: 'delete', label: 'Löschen…', enabled: !isHead(r) }]
       : []),
-    ...(r.kind === 'remote' ? [{ separator: true as const }, { id: 'delete-remote', label: 'Auf Remote löschen…' }] : [])
+    ...(r.kind === 'remote' ? [{ separator: true as const }, { id: 'delete-remote', label: 'Auf Remote löschen…' }] : []),
+    { separator: true },
+    { id: 'hide', label: repo.hidden.has(r.fullName) ? 'Wieder einblenden' : 'Im Graph ausblenden', enabled: !isHead(r) },
+    { id: 'solo', label: repo.solo === r.fullName ? 'Solo beenden' : 'Nur diesen Branch zeigen (Solo)' }
   ])
   if (id === 'checkout') repo.checkoutBranch(r.name)
   else if (id === 'create') repo.createBranch(r.target)
@@ -31,6 +34,8 @@ async function menu(r: Ref) {
   else if (id === 'delete-remote') repo.deleteRemoteBranch(r.name)
   else if (id === 'merge') repo.mergeInto(r.name)
   else if (id === 'rebase') repo.rebaseOnto(r.name)
+  else if (id === 'hide') repo.toggleHidden(r.fullName)
+  else if (id === 'solo') repo.toggleSolo(r.fullName)
 }
 
 function open(r: Ref) {
@@ -63,13 +68,17 @@ async function stashMenu(sha: string) {
 
 <template>
   <nav class="sidebar" aria-label="Referenzen">
+    <div v-if="repo.solo || repo.hidden.size" class="filter">
+      <span>{{ repo.solo ? 'Solo aktiv' : `${repo.hidden.size} ausgeblendet` }}</span>
+      <button @click="repo.resetFilters()">Zurücksetzen</button>
+    </div>
     <section v-for="s in sections" :key="s.title">
       <h3>{{ s.title }} <span class="dim">{{ s.refs.length }}</span></h3>
       <button
         v-for="r in s.refs"
         :key="r.fullName"
         class="item"
-        :class="{ head: isHead(r) }"
+        :class="{ head: isHead(r), hidden: repo.hidden.has(r.fullName), solo: repo.solo === r.fullName }"
         :title="`${r.fullName} – Doppelklick zum Auschecken`"
         @click="repo.select(r.target)"
         @dblclick="open(r)"
@@ -112,5 +121,9 @@ h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; margin:
 }
 .item:hover { background: var(--bg-hover); }
 .item.head .name { color: var(--accent); font-weight: 600; }
+.item.hidden .name { text-decoration: line-through; opacity: 0.5; }
+.item.solo .name { color: var(--lane-1); font-weight: 600; }
+.filter { display: flex; align-items: center; justify-content: space-between; margin: 0 8px 4px; padding: 4px 8px; border-radius: 6px; background: var(--bg-hover); font-size: 12px; }
+.filter button { padding: 0 8px; font-size: 12px; }
 .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>

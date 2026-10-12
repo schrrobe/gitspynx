@@ -355,4 +355,40 @@ describe('repo store', () => {
       expect(repo.selected).toBe(WIP)
     })
   })
+
+  describe('branch filters', () => {
+    const refs = [
+      { name: 'main', fullName: 'refs/heads/main', kind: 'local', target: 'a0' },
+      { name: 'topic', fullName: 'refs/heads/topic', kind: 'local', target: 't0' },
+      { name: 'origin/main', fullName: 'refs/remotes/origin/main', kind: 'remote', target: 'o0' }
+    ]
+    async function opened() {
+      const repo = useRepo()
+      const w = (globalThis as unknown as { window: { gitspynx: Record<string, unknown> } }).window
+      w.gitspynx.openRepo = async () => ({ ...info, refs, tips: ['a0', 't0', 'o0'] })
+      const first = repo.open('/r')
+      await flush()
+      logCalls[0].d.resolve(page('c', 3))
+      await first
+      const tipsSeen: unknown[] = []
+      w.gitspynx.readLog = async (_r: string, _s: number, _l: number, tips?: string[]) => (tipsSeen.push(tips), page('c', 3))
+      return { repo, tipsSeen }
+    }
+
+    it('hides a branch by reloading history without its tip, keeping HEAD', async () => {
+      const { repo, tipsSeen } = await opened()
+      await repo.toggleHidden('refs/heads/topic')
+      expect(tipsSeen.at(-1)).toEqual(['a0', 'o0'])
+      await repo.toggleHidden('refs/heads/topic')
+      expect(tipsSeen.at(-1)).toBeUndefined() // back to the full snapshot
+    })
+
+    it('solos a branch: only its tip', async () => {
+      const { repo, tipsSeen } = await opened()
+      await repo.toggleSolo('refs/heads/topic')
+      expect(tipsSeen.at(-1)).toEqual(['t0'])
+      await repo.resetFilters()
+      expect(tipsSeen.at(-1)).toBeUndefined()
+    })
+  })
 })

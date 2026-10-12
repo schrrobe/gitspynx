@@ -20,6 +20,8 @@ export const useRepo = defineStore('repo', () => {
   const diff = ref<FileDiff | null>(null)
   const busy = ref<'fetch' | 'pull' | 'push' | null>(null) // running network operation
   const conflict = shallowRef<{ path: string; versions: ConflictVersions } | null>(null)
+  const hidden = shallowRef(new Set<string>()) // fullNames of refs whose history is hidden
+  const solo = ref<string | null>(null) // fullName of the only ref shown
   // Bumped whenever the loaded history is replaced; results of older requests are dropped.
   let generation = 0
 
@@ -45,6 +47,18 @@ export const useRepo = defineStore('repo', () => {
     }
   }
 
+  // undefined = the whole snapshot; otherwise the tips that remain visible under the filters
+  function tipsFor(repo: RepoInfo): string[] | undefined {
+    if (solo.value) {
+      const r = repo.refs.find((x) => x.fullName === solo.value)
+      if (r) return [r.target]
+    }
+    if (!hidden.value.size) return undefined
+    const visible = new Set(repo.refs.filter((r) => r.kind !== 'stash' && !hidden.value.has(r.fullName)).map((r) => r.target))
+    if (repo.head.sha) visible.add(repo.head.sha)
+    return repo.tips.filter((t) => visible.has(t))
+  }
+
   // Reads repo state and the first pages again; keepCount keeps at least that many commits loaded.
   const open = (path: string, keepCount = 0) =>
     guard(async () => {
@@ -53,7 +67,7 @@ export const useRepo = defineStore('repo', () => {
       try {
         const next = await window.gitspynx.openRepo(path)
         const [first, files] = await Promise.all([
-          window.gitspynx.readLog(next.path, 0, Math.max(PAGE, keepCount)),
+          window.gitspynx.readLog(next.path, 0, Math.max(PAGE, keepCount), tipsFor(next)),
           window.gitspynx.readStatus(next.path)
         ])
         if (gen !== generation) return
@@ -81,7 +95,7 @@ export const useRepo = defineStore('repo', () => {
       const gen = generation
       loading.value = true
       try {
-        const page = await window.gitspynx.readLog(info.value.path, commits.value.length, PAGE)
+        const page = await window.gitspynx.readLog(info.value.path, commits.value.length, PAGE, tipsFor(info.value))
         if (gen !== generation) return
         commits.value = [...commits.value, ...page]
         complete.value = page.length < PAGE
@@ -318,8 +332,39 @@ export const useRepo = defineStore('repo', () => {
       await refreshStatus()
     })
 
+  // Filters change which tips the log walks, so history is reloaded from the start.
+  const reloadFiltered = () => info.value && open(info.value.path)
+
+  function toggleHidden(fullName: string) {
+    const next = new Set(hidden.value)
+    if (!next.delete(fullName)) next.add(fullName)
+    hidden.value = next
+    return reloadFiltered()
+  }
+
+  function toggleSolo(fullName: string) {
+    solo.value = solo.value === fullName ? null : fullName
+    return reloadFiltered()
+  }
+
+  function resetFilters() {
+    hidden.value = new Set()
+    solo.value = null
+    return reloadFiltered()
+  }
+
+  async function loadAll() {
+    while (info.value && !complete.value) {
+      const before = commits.value.length
+      await loadMore()
+      if (commits.value.length === before) break // error or superseded
+    }
+  }
+
   const close = () => {
     void window.gitspynx.closeRepo()
+    hidden.value = new Set()
+    solo.value = null
     conflict.value = null
     generation++
     loading.value = false
@@ -334,6 +379,6 @@ export const useRepo = defineStore('repo', () => {
     graph, refsBySha, open, refresh, loadMore, select, refreshStatus, openDiff, closeDiff, stage, unstage, commit, close,
     checkoutBranch, createBranch, renameBranch, deleteBranch, busy, fetchAll, pullBranch, pushBranch, deleteRemoteBranch,
     conflict, mergeInto, rebaseOnto, cherryPick, continueOp, skipOp, abortOp, openConflict, resolve,
-    stash, applyStash, popLatestStash, dropStash
+    stash, applyStash, popLatestStash, dropStash, hidden, solo, toggleHidden, toggleSolo, resetFilters, loadAll
   }
 })

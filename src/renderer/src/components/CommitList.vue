@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { searchCommits } from '../search'
 import { useRepo, WIP } from '../stores/repo'
 import GraphCell from './GraphCell.vue'
 
@@ -15,7 +16,7 @@ const visible = computed(() => {
   const start = Math.max(0, Math.floor(scrollTop.value / ROW) - OVERSCAN)
   const end = Math.min(repo.commits.length, Math.ceil((scrollTop.value + height.value) / ROW) + OVERSCAN)
   const rows = repo.graph.rows
-  return repo.commits.slice(start, end).map((c, i) => ({ c, row: rows[start + i], top: (start + i) * ROW }))
+  return repo.commits.slice(start, end).map((c, i) => ({ c, index: start + i, row: rows[start + i], top: (start + i) * ROW }))
 })
 
 function onScroll() {
@@ -49,21 +50,71 @@ async function menu(sha: string) {
   else if (id === 'copy') navigator.clipboard.writeText(sha)
 }
 
-function move(delta: number) {
-  const list = repo.commits
-  const i = list.findIndex((c) => c.sha === repo.selected)
-  const next = list[Math.min(list.length - 1, Math.max(0, i + delta))]
-  if (!next) return
-  repo.select(next.sha)
+function reveal(index: number) {
   const el = scroller.value!
-  const top = list.indexOf(next) * ROW
+  const top = index * ROW
   if (top < el.scrollTop) el.scrollTop = top
   else if (top + ROW > el.scrollTop + el.clientHeight) el.scrollTop = top + ROW - el.clientHeight
 }
+
+function move(delta: number) {
+  const list = repo.commits
+  const i = list.findIndex((c) => c.sha === repo.selected)
+  const index = Math.min(list.length - 1, Math.max(0, i + delta))
+  if (!list[index]) return
+  repo.select(list[index].sha)
+  reveal(index)
+}
+
+// Search: matching rows are highlighted, Enter / Shift+Enter walks through them.
+const query = ref('')
+const searchInput = ref<HTMLInputElement>()
+const hits = computed(() => searchCommits(repo.commits, query.value))
+const hitSet = computed(() => new Set(hits.value))
+const current = ref(-1)
+watch(hits, () => (current.value = -1))
+
+function nextHit(delta: number) {
+  if (!hits.value.length) return
+  current.value = (current.value + delta + hits.value.length) % hits.value.length
+  const index = hits.value[current.value]
+  repo.select(repo.commits[index].sha)
+  reveal(index)
+}
+
+const onKey = (e: KeyboardEvent) => {
+  if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
+    e.preventDefault()
+    searchInput.value?.focus()
+    searchInput.value?.select()
+  }
+}
+onMounted(() => window.addEventListener('keydown', onKey))
+onUnmounted(() => window.removeEventListener('keydown', onKey))
 </script>
 
 <template>
   <div class="wrap">
+  <div class="search">
+    <input
+      ref="searchInput"
+      v-model="query"
+      type="search"
+      placeholder="Commits suchen (⌘F) – Nachricht, Autor, SHA"
+      aria-label="Commits suchen"
+      @keydown.enter.exact.prevent="nextHit(1)"
+      @keydown.shift.enter.prevent="nextHit(-1)"
+      @keydown.esc="query = ''"
+    />
+    <template v-if="query.trim()">
+      <span class="dim count">{{ hits.length ? `${current + 1 || '–'}/${hits.length}` : 'keine Treffer' }}</span>
+      <button :disabled="!hits.length" aria-label="Vorheriger Treffer" @click="nextHit(-1)">↑</button>
+      <button :disabled="!hits.length" aria-label="Nächster Treffer" @click="nextHit(1)">↓</button>
+      <button v-if="!repo.complete" :disabled="repo.loading" :title="`Nur ${repo.commits.length} geladene Commits durchsucht`" @click="repo.loadAll()">
+        Alle laden
+      </button>
+    </template>
+  </div>
   <button v-if="repo.status.length" class="wip" :class="{ selected: repo.selected === WIP }" @click="repo.select(WIP)">
     <span class="wip-dot" aria-hidden="true" />
     <span>Arbeitsverzeichnis</span>
@@ -86,7 +137,7 @@ function move(delta: number) {
         class="row"
         role="option"
         :aria-selected="v.c.sha === repo.selected"
-        :class="{ selected: v.c.sha === repo.selected }"
+        :class="{ selected: v.c.sha === repo.selected, hit: hitSet.has(v.index), dimmed: query.trim() && !hitSet.has(v.index) }"
         :style="{ transform: `translateY(${v.top}px)` }"
         @click="repo.select(v.c.sha)"
         @contextmenu.prevent="menu(v.c.sha)"
@@ -113,6 +164,22 @@ function move(delta: number) {
 
 <style scoped>
 .wrap { display: flex; flex-direction: column; }
+.search { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-bottom: 1px solid var(--border); flex: none; }
+.search input {
+  flex: 1;
+  font: inherit;
+  color: var(--text);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 8px;
+  user-select: text;
+}
+.search input:focus { outline: none; border-color: var(--accent); }
+.search button { padding: 1px 8px; }
+.count { font-variant-numeric: tabular-nums; min-width: 72px; text-align: right; }
+.row.hit .subject { font-weight: 600; }
+.row.dimmed { opacity: 0.45; }
 .scroller { flex: 1; overflow: auto; position: relative; outline: none; }
 .wip {
   display: flex;

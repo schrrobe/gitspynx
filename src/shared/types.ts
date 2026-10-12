@@ -57,7 +57,8 @@ export interface GitspynxApi {
   recentRepos(): Promise<string[]>
   openRepo(path: string): Promise<RepoInfo>
   closeRepo(): Promise<void>
-  readLog(repo: string, skip: number, limit: number): Promise<Commit[]> // pages over RepoInfo.tips
+  // pages over RepoInfo.tips, or over a subset of them (branch filters)
+  readLog(repo: string, skip: number, limit: number, tips?: string[]): Promise<Commit[]>
   readCommit(repo: string, sha: string): Promise<CommitDetail>
   readStatus(repo: string): Promise<FileStatus[]>
   stage(repo: string, paths: string[]): Promise<void>

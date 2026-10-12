@@ -157,9 +157,13 @@ const handlers: Handlers = {
     await watchOpenRepo(info.path, sender)
     return info
   },
-  readLog: (_s, repo, skip, limit) => {
+  readLog: (_s, repo, skip, limit, tips) => {
     const path = knownRepo(repo)
-    return readLog(path, opened.get(path)!, int(skip, 1e7), int(limit, 10000))
+    const snapshot = opened.get(path)!
+    // a filter may only narrow the snapshot taken at open
+    if (tips !== undefined && !Array.isArray(tips)) throw new GitError('invalid argument')
+    const chosen = tips === undefined ? snapshot : snapshot.filter((t) => tips.includes(t))
+    return readLog(path, chosen, int(skip, 1e7), int(limit, 10000))
   },
   readCommit: (_s, repo, sha) => readCommit(knownRepo(repo), str(sha)),
   readStatus: (_s, repo) => readStatus(knownRepo(repo)),
