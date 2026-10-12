@@ -23,11 +23,15 @@ describe('keymap', () => {
   })
 
   it('normalizes user-written combos (order, case, aliases)', () => {
-    expect(normalizeCombo('shift+cmd+p')).toBe('Mod+Shift+P')
-    expect(normalizeCombo('Ctrl + l')).toBe('Ctrl+L')
-    expect(normalizeCombo('mod+,')).toBe('Mod+,')
-    expect(normalizeCombo('Mod+')).toBeNull()
-    expect(normalizeCombo('Hyper+X')).toBeNull()
+    expect(normalizeCombo('shift+cmd+p', true)).toBe('Mod+Shift+P')
+    expect(normalizeCombo('Ctrl + l', true)).toBe('Ctrl+L')
+    expect(normalizeCombo('mod+,', true)).toBe('Mod+,')
+    expect(normalizeCombo('Mod+', true)).toBeNull()
+    expect(normalizeCombo('Hyper+X', true)).toBeNull()
+  })
+
+  it('treats Ctrl as Mod outside macOS', () => {
+    expect(normalizeCombo('Ctrl+L', false)).toBe('Mod+L')
   })
 })
 
