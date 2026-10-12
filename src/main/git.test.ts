@@ -6,6 +6,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import {
   abortOperation,
   applyUndo,
+  readHead,
   assertRevision,
   cherryPick,
   continueOperation,
@@ -956,25 +957,25 @@ describe('undo actions', () => {
   afterAll(() => rmSync(ud, { recursive: true, force: true }))
 
   it('moves HEAD back softly (undo commit) and forward again (redo), keeping changes staged', async () => {
-    await applyUndo(ud, [{ type: 'reset', expect: second, to: first, mode: 'soft' }])
+    await applyUndo(ud, [{ type: 'reset', expect: second, to: first, mode: 'soft', branch: 'main' }])
     expect(u('rev-parse', 'HEAD')).toBe(first)
     expect(u('diff', '--cached', '--name-only')).toBe('a.txt')
-    await applyUndo(ud, [{ type: 'reset', expect: first, to: second, mode: 'soft' }])
+    await applyUndo(ud, [{ type: 'reset', expect: first, to: second, mode: 'soft', branch: 'main' }])
     expect(u('rev-parse', 'HEAD')).toBe(second)
     expect(u('status', '--porcelain')).toBe('')
   })
 
   it('refuses when HEAD is no longer where the action left it', async () => {
-    await expect(applyUndo(ud, [{ type: 'reset', expect: first, to: first, mode: 'soft' }])).rejects.toThrow(/changed/)
+    await expect(applyUndo(ud, [{ type: 'reset', expect: first, to: first, mode: 'soft', branch: 'main' }])).rejects.toThrow(/changed/)
   })
 
   it('keeps local changes with mode keep and refuses to overwrite them', async () => {
     writeFileSync(join(ud, 'b.txt'), 'untracked\n')
-    await applyUndo(ud, [{ type: 'reset', expect: second, to: first, mode: 'keep' }])
+    await applyUndo(ud, [{ type: 'reset', expect: second, to: first, mode: 'keep', branch: 'main' }])
     expect(readFileSync(join(ud, 'b.txt'), 'utf8')).toBe('untracked\n')
-    await applyUndo(ud, [{ type: 'reset', expect: first, to: second, mode: 'keep' }])
+    await applyUndo(ud, [{ type: 'reset', expect: first, to: second, mode: 'keep', branch: 'main' }])
     writeFileSync(join(ud, 'a.txt'), 'local edit\n')
-    await expect(applyUndo(ud, [{ type: 'reset', expect: second, to: first, mode: 'keep' }])).rejects.toBeInstanceOf(GitError)
+    await expect(applyUndo(ud, [{ type: 'reset', expect: second, to: first, mode: 'keep', branch: 'main' }])).rejects.toBeInstanceOf(GitError)
     expect(readFileSync(join(ud, 'a.txt'), 'utf8')).toBe('local edit\n')
     u('checkout', '--', 'a.txt')
     rmSync(join(ud, 'b.txt'))
@@ -996,6 +997,29 @@ describe('undo actions', () => {
     ])
     expect(u('branch', '--show-current')).toBe('main')
     expect(u('branch', '--list', 'feature')).toBe('')
+  })
+
+  it('refuses while a merge, rebase or cherry-pick is in progress', async () => {
+    u('switch', '-q', '-c', 'clash', first)
+    writeFileSync(join(ud, 'a.txt'), 'clash\n')
+    u('commit', '-q', '-am', 'clash')
+    u('switch', '-q', 'main')
+    await expect(merge(ud, 'clash')).resolves.toBe('conflicts')
+    await expect(applyUndo(ud, [{ type: 'reset', expect: second, to: first, mode: 'soft', branch: 'main' }])).rejects.toThrow(/in progress/)
+    await abortOperation(ud)
+    u('branch', '-D', 'clash')
+  })
+
+  it('refuses to move a different branch that happens to be at the same commit', async () => {
+    u('switch', '-q', '-c', 'twin')
+    await expect(applyUndo(ud, [{ type: 'reset', expect: second, to: first, mode: 'soft', branch: 'main' }])).rejects.toThrow(/cannot be undone/)
+    expect(u('rev-parse', 'twin')).toBe(second)
+    u('switch', '-q', 'main')
+    u('branch', '-D', 'twin')
+  })
+
+  it('reads HEAD (commit and branch) straight from git', async () => {
+    expect(await readHead(ud)).toEqual({ sha: second, branch: 'main' })
   })
 
   it('renames branches back', async () => {

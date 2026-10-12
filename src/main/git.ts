@@ -513,14 +513,28 @@ export async function interactiveRebase(repo: string, base: string, steps: Rebas
 
 // Executes the steps of an undo or redo in order. Every step first checks that the repository is
 // still in the state the recorded action left it in; otherwise nothing more is changed.
+// HEAD as git sees it now (the renderer's view may lag behind a reload).
+export async function readHead(repo: string): Promise<{ sha: string | null; branch: string | null }> {
+  const [sha, branch] = await Promise.all([
+    run(['rev-parse', '-q', '--verify', 'HEAD'], repo, [0, 1]),
+    run(['symbolic-ref', '-q', '--short', 'HEAD'], repo, [0, 1])
+  ])
+  return { sha: sha.stdout.trim() || null, branch: branch.stdout.trim() || null }
+}
+
+// Messages containing "cannot be undone" mean the recorded state is gone for good (the renderer
+// then forgets the entry); any other failure may be temporary (local changes, a lock).
 export async function applyUndo(repo: string, steps: UndoStep[]): Promise<void> {
+  const op = await currentOperation(repo)
+  if (op) throw new GitError(`a ${op} is in progress — finish or abort it first`)
   for (const step of steps) {
     switch (step.type) {
       case 'reset': {
         assertRevision(step.expect)
         assertRevision(step.to)
-        const head = (await run(['rev-parse', '-q', '--verify', 'HEAD'], repo, [0, 1])).stdout.trim()
-        if (head !== step.expect) throw new GitError('the repository changed since this action — it cannot be undone')
+        const head = await readHead(repo)
+        if (head.sha !== step.expect || head.branch !== step.branch)
+          throw new GitError('the repository changed since this action — it cannot be undone')
         // soft: keep the undone commit's changes staged; keep: like reset --hard but refuses to
         // touch files with local changes
         await run(['reset', step.mode === 'soft' ? '--soft' : '--keep', step.to], repo)

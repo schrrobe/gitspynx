@@ -79,6 +79,7 @@ export interface GitspynxApi {
   readRebasePlan(repo: string, base: string): Promise<RebaseCommit[]>
   interactiveRebase(repo: string, base: string, steps: RebaseStep[]): Promise<'ok' | 'conflicts'>
   applyUndo(repo: string, steps: UndoStep[]): Promise<void>
+  readHead(repo: string): Promise<{ sha: string | null; branch: string | null }>
   commit(repo: string, message: string, amend: boolean): Promise<void>
   createBranch(repo: string, name: string, start: string, switchTo: boolean): Promise<void>
   checkout(repo: string, branch: string): Promise<void>
@@ -175,7 +176,7 @@ export interface RebaseStep {
 
 // One step of an undo or redo; main checks the expected state before each step.
 export type UndoStep =
-  | { type: 'reset'; expect: string; to: string; mode: 'soft' | 'keep' }
+  | { type: 'reset'; expect: string; to: string; mode: 'soft' | 'keep'; branch: string | null } // branch: expected checked-out branch
   | { type: 'checkout'; branch: string }
   | { type: 'createBranch'; name: string; sha: string }
   | { type: 'deleteBranch'; name: string; expect: string }

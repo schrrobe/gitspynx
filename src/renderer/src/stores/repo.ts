@@ -243,29 +243,46 @@ export const useRepo = defineStore('repo', () => {
     histories.value = new Map(histories.value).set(path, { undo: [...h.undo, entry].slice(-50), redo: [] })
   }
 
+  // HEAD read from git around an action: the store's view can be overtaken by a watcher reload.
+  const gitHead = (path: string) => window.gitspynx.readHead(path).catch(() => ({ sha: null, branch: null }))
+
   // Runs an action and records it when HEAD moved (commit, merge, rebase, pull …).
   async function recordHeadMove(label: string, mode: 'soft' | 'keep', action: () => Promise<boolean>) {
     const path = info.value?.path
-    const before = info.value?.head.sha
+    if (!path) return false
+    const before = await gitHead(path)
     const ok = await action()
-    const after = info.value?.head.sha
-    if (ok && path && info.value?.path === path && before && after && before !== after)
-      record(path, { label, undo: [{ type: 'reset', expect: after, to: before, mode }], redo: [{ type: 'reset', expect: before, to: after, mode }] })
+    const after = await gitHead(path)
+    if (ok && before.sha && after.sha && before.sha !== after.sha && before.branch === after.branch)
+      record(path, {
+        label,
+        undo: [{ type: 'reset', expect: after.sha, to: before.sha, mode, branch: after.branch }],
+        redo: [{ type: 'reset', expect: before.sha, to: after.sha, mode, branch: before.branch }]
+      })
     return ok
   }
 
+  const undoing = ref(false)
+
   async function step(direction: 'undo' | 'redo') {
-    if (!info.value || busy.value) return
+    if (!info.value || busy.value || undoing.value) return
     const path = info.value.path
-    const h = histories.value.get(path)
-    const entry = h?.[direction].at(-1)
-    if (!h || !entry) return
-    const rest = { ...h, [direction]: h[direction].slice(0, -1) }
-    histories.value = new Map(histories.value).set(path, rest) // a refused step is forgotten
-    const ok = await mutate((r) => window.gitspynx.applyUndo(r, entry[direction]))
-    if (!ok) return
-    const other = direction === 'undo' ? 'redo' : 'undo'
-    histories.value = new Map(histories.value).set(path, { ...rest, [other]: [...rest[other], entry] })
+    const entry = histories.value.get(path)?.[direction].at(-1)
+    if (!entry) return
+    undoing.value = true
+    try {
+      const ok = await mutate((r) => window.gitspynx.applyUndo(r, entry[direction]))
+      const h = histories.value.get(path)!
+      const rest = { ...h, [direction]: h[direction].filter((e) => e !== entry) }
+      if (ok) {
+        const other = direction === 'undo' ? 'redo' : 'undo'
+        histories.value = new Map(histories.value).set(path, { ...rest, [other]: [...rest[other], entry] })
+      } else if (/cannot be undone/.test(error.value ?? '')) {
+        histories.value = new Map(histories.value).set(path, rest) // the recorded state is gone for good
+      }
+    } finally {
+      undoing.value = false
+    }
   }
   const undo = () => step('undo')
   const redo = () => step('redo')
@@ -309,9 +326,10 @@ export const useRepo = defineStore('repo', () => {
 
   async function checkoutBranch(name: string) {
     const path = info.value?.path
-    const before = info.value?.head.branch
+    if (!path) return
+    const before = (await gitHead(path)).branch
     if (!(await mutate((r) => window.gitspynx.checkout(r, name)))) return
-    const after = info.value?.head.branch
+    const after = (await gitHead(path)).branch
     if (path && before && after && before !== after)
       record(path, { label: `Checkout „${after}“`, undo: [{ type: 'checkout', branch: before }], redo: [{ type: 'checkout', branch: after }] })
   }
@@ -320,9 +338,9 @@ export const useRepo = defineStore('repo', () => {
     const name = await ask('Neuer Branch', '', 'Erstellen und auschecken')
     if (!name || !info.value) return
     const path = info.value.path
-    const before = info.value.head.branch
+    const before = (await gitHead(path)).branch
     if (!(await mutate((r) => window.gitspynx.createBranch(r, name, start, true)))) return
-    const sha = info.value?.head.sha
+    const sha = (await gitHead(path)).sha
     if (before && sha)
       record(path, {
         label: `Branch „${name}“ erstellt`,
@@ -531,7 +549,7 @@ export const useRepo = defineStore('repo', () => {
   }
 
   return {
-    info, commits, complete, loading, error, notice, viewState, selected, detail, status, staged, unstaged, diffTarget, diff, unstageFiles,
+    info, commits, complete, loading, error, notice, viewState, undoing, selected, detail, status, staged, unstaged, diffTarget, diff, unstageFiles,
     graph, refsBySha, open, refresh, loadMore, select, refreshStatus, openDiff, closeDiff, stage, unstage, commit, close,
     checkoutBranch, createBranch, renameBranch, deleteBranch, busy, fetchAll, pullBranch, pushBranch, deleteRemoteBranch,
     conflict, mergeInto, rebaseOnto, cherryPick, continueOp, skipOp, abortOp, openConflict, resolve,

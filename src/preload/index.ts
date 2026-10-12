@@ -22,6 +22,7 @@ const methods: (keyof GitspynxApi)[] = [
   'readRebasePlan',
   'interactiveRebase',
   'applyUndo',
+  'readHead',
   'commit',
   'createBranch',
   'checkout',

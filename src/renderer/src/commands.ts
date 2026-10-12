@@ -65,7 +65,7 @@ export function buildCommands({ repo, tabs, settings, pickRepo }: Context): Comm
       title: 'Rückgängig',
       keys: 'Mod+Z',
       notInTextFields: true,
-      enabled: () => idle() && !!repo.undoLabel,
+      enabled: () => idle() && !repo.undoing && !repo.info?.operation && !!repo.undoLabel,
       run: () => repo.undo()
     },
     {
@@ -73,7 +73,7 @@ export function buildCommands({ repo, tabs, settings, pickRepo }: Context): Comm
       title: 'Wiederholen',
       keys: 'Mod+Shift+Z',
       notInTextFields: true,
-      enabled: () => idle() && !!repo.redoLabel,
+      enabled: () => idle() && !repo.undoing && !repo.info?.operation && !!repo.redoLabel,
       run: () => repo.redo()
     },
     { id: 'repo.refresh', title: 'Aktualisieren', keys: 'Mod+R', enabled: open, run: () => repo.refresh() },

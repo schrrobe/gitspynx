@@ -30,6 +30,7 @@ beforeEach(() => {
     gitspynx: {
       openRepo: async () => info,
       closeRepo: async () => {},
+      readHead: async () => ({ sha: 'a0', branch: 'main' }),
       readStatus: async () => [],
       readFileDiff: async () => ({ binary: false, hunks: [] }),
       readLog: (_repo: string, skip: number) => {
@@ -504,6 +505,7 @@ describe('repo store', () => {
       head = 'a0'
       applied = []
       w().gitspynx.openRepo = async () => ({ ...info, head: { branch: 'main', sha: head } })
+      w().gitspynx.readHead = async () => ({ sha: head, branch: 'main' })
       w().gitspynx.readLog = async () => page('c', 3)
       w().gitspynx.commit = async () => void (head = 'b1')
       w().gitspynx.applyUndo = async (_r: string, steps: unknown[]) => {
@@ -521,11 +523,11 @@ describe('repo store', () => {
       await repo.commit('Add feature\n\nbody', false)
       expect(repo.undoLabel).toBe('Commit „Add feature“')
       await repo.undo()
-      expect(applied.at(-1)).toEqual([{ type: 'reset', expect: 'b1', to: 'a0', mode: 'soft' }])
+      expect(applied.at(-1)).toEqual([{ type: 'reset', expect: 'b1', to: 'a0', mode: 'soft', branch: 'main' }])
       expect(repo.undoLabel).toBeNull()
       expect(repo.redoLabel).toBe('Commit „Add feature“')
       await repo.redo()
-      expect(applied.at(-1)).toEqual([{ type: 'reset', expect: 'a0', to: 'b1', mode: 'soft' }])
+      expect(applied.at(-1)).toEqual([{ type: 'reset', expect: 'a0', to: 'b1', mode: 'soft', branch: 'main' }])
       expect(repo.undoLabel).toBe('Commit „Add feature“')
     })
 
@@ -536,6 +538,24 @@ describe('repo store', () => {
       w().gitspynx.commit = async () => void (head = 'c2')
       await repo.commit('two', false)
       expect(repo.redoLabel).toBeNull()
+    })
+
+    it('records from git even when a newer reload overtook the action\'s own', async () => {
+      const repo = await opened()
+      w().gitspynx.openRepo = async () => ({ ...info, head: { branch: 'main', sha: 'a0' } }) // stale store view
+      await repo.commit('one', false)
+      expect(repo.undoLabel).toBe('Commit „one“')
+    })
+
+    it('keeps an entry whose undo failed only temporarily', async () => {
+      const repo = await opened()
+      await repo.commit('one', false)
+      w().gitspynx.applyUndo = async () => {
+        throw new Error('error: Entry a.txt not uptodate. Cannot merge.')
+      }
+      await repo.undo()
+      expect(repo.error).toMatch(/not uptodate/)
+      expect(repo.undoLabel).toBe('Commit „one“')
     })
 
     it('forgets an entry whose undo was refused', async () => {

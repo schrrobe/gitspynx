@@ -23,6 +23,7 @@ import {
   push,
   readCommit,
   readConflict,
+  readHead,
   readRebasePlan,
   readFileDiff,
   readLog,
@@ -129,7 +130,7 @@ function undoSteps(v: unknown): UndoStep[] {
     switch (s?.type) {
       case 'reset':
         if (s.mode !== 'soft' && s.mode !== 'keep') break
-        return { type: 'reset', expect: str(s.expect), to: str(s.to), mode: s.mode }
+        return { type: 'reset', expect: str(s.expect), to: str(s.to), mode: s.mode, branch: s.branch === null ? null : str(s.branch) }
       case 'checkout':
         return { type: 'checkout', branch: str(s.branch) }
       case 'createBranch':
@@ -265,6 +266,7 @@ const handlers: Handlers = {
   readRebasePlan: (_s, repo, base) => readRebasePlan(knownRepo(repo), str(base)),
   interactiveRebase: (_s, repo, base, steps) => interactiveRebase(knownRepo(repo), str(base), rebaseSteps(steps)),
   applyUndo: (_s, repo, steps) => applyUndo(knownRepo(repo), undoSteps(steps)),
+  readHead: (_s, repo) => readHead(knownRepo(repo)),
   commit: (_s, repo, message, amend) => commit(knownRepo(repo), str(message), amend === true),
   createBranch: (_s, repo, name, start, switchTo) => createBranch(knownRepo(repo), str(name), str(start), switchTo === true),
   checkout: (_s, repo, branch) => checkout(knownRepo(repo), str(branch)),
