@@ -288,6 +288,20 @@ export const useRepo = defineStore('repo', () => {
     await mutate((r) => window.gitspynx.abortOperation(r))
   }
 
+  const stash = (message = '') => mutate((r) => window.gitspynx.stashPush(r, message))
+  const applyStash = (sha: string, pop: boolean) => integrate((r) => window.gitspynx.stashApply(r, sha, pop))
+
+  async function popLatestStash() {
+    const latest = info.value?.stashes[0]
+    if (latest) await applyStash(latest.sha, true)
+  }
+
+  async function dropStash(sha: string) {
+    const st = info.value?.stashes.find((x) => x.sha === sha)
+    if (await window.gitspynx.confirm(`Stash „${st?.subject ?? sha.slice(0, 7)}“ löschen?`, 'Der Stash ist danach nur noch über git fsck auffindbar.', 'Stash löschen'))
+      await mutate((r) => window.gitspynx.stashDrop(r, sha))
+  }
+
   const openConflict = (path: string) =>
     guard(async () => {
       if (!info.value) return
@@ -319,6 +333,7 @@ export const useRepo = defineStore('repo', () => {
     info, commits, complete, loading, error, selected, detail, status, staged, unstaged, diffTarget, diff, unstageFiles,
     graph, refsBySha, open, refresh, loadMore, select, refreshStatus, openDiff, closeDiff, stage, unstage, commit, close,
     checkoutBranch, createBranch, renameBranch, deleteBranch, busy, fetchAll, pullBranch, pushBranch, deleteRemoteBranch,
-    conflict, mergeInto, rebaseOnto, cherryPick, continueOp, skipOp, abortOp, openConflict, resolve
+    conflict, mergeInto, rebaseOnto, cherryPick, continueOp, skipOp, abortOp, openConflict, resolve,
+    stash, applyStash, popLatestStash, dropStash
   }
 })

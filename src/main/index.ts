@@ -29,6 +29,9 @@ import {
   resolveConflict,
   skipOperation,
   stage,
+  stashApply,
+  stashDrop,
+  stashPush,
   unstage
 } from './git'
 import { type RepoWatcher, watchRepo } from './watch'
@@ -189,6 +192,9 @@ const handlers: Handlers = {
   continueOperation: (_s, repo) => continueOperation(knownRepo(repo)),
   skipOperation: (_s, repo) => skipOperation(knownRepo(repo)),
   abortOperation: (_s, repo) => abortOperation(knownRepo(repo)),
+  stashPush: (_s, repo, message) => stashPush(knownRepo(repo), typeof message === 'string' ? message.slice(0, 2000) : ''),
+  stashApply: (_s, repo, sha, pop) => stashApply(knownRepo(repo), str(sha), pop === true),
+  stashDrop: (_s, repo, sha) => stashDrop(knownRepo(repo), str(sha)),
   readConflict: (_s, repo, path) => readConflict(knownRepo(repo), str(path)),
   resolveConflict: (_s, repo, path, r) => resolveConflict(knownRepo(repo), str(path), resolution(r)),
   showContextMenu: (sender, items) => popupMenu(sender, menuItems(items)),

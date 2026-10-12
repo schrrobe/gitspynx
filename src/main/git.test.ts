@@ -32,6 +32,10 @@ import {
   renameBranch,
   run,
   stage,
+  stashApply,
+  stashDrop,
+  stashPush,
+  listStashes,
   unstage
 } from './git'
 
@@ -642,5 +646,69 @@ describe('merge, rebase, cherry-pick and conflicts', () => {
     write('f.txt', 'dirty\n')
     await expect(merge(md, 'side')).rejects.toBeInstanceOf(GitError)
     m('checkout', '--', 'f.txt')
+  })
+})
+
+describe('stashes', () => {
+  let sd: string
+  const s = (...args: string[]) => execFileSync('git', args, { cwd: sd, env }).toString().trim()
+  const write = (f: string, c: string) => writeFileSync(join(sd, f), c)
+
+  beforeAll(() => {
+    sd = mkdtempSync(join(tmpdir(), 'gitspynx-stash-'))
+    s('init', '-q', '-b', 'main')
+    write('t.txt', 'base\n')
+    s('add', '.')
+    s('commit', '-q', '-m', 'base')
+  })
+  afterAll(() => rmSync(sd, { recursive: true, force: true }))
+
+  it('stashes tracked and untracked changes with a message and lists them newest first', async () => {
+    write('t.txt', 'changed\n')
+    write('new.txt', 'untracked\n')
+    await stashPush(sd, 'first stash')
+    expect(s('status', '--porcelain')).toBe('')
+    write('t.txt', 'second\n')
+    await stashPush(sd, '-looks like an option')
+    const list = await listStashes(sd)
+    expect(list.map((x) => x.subject)).toEqual(['On main: -looks like an option', 'On main: first stash'])
+    expect(list[0].sha).toBe(s('rev-parse', 'stash@{0}'))
+  })
+
+  it('does not list stash internals as history', async () => {
+    const info = await openRepo(sd)
+    expect(info.tips).not.toContain(s('rev-parse', 'stash@{0}'))
+    expect(info.stashes).toHaveLength(2)
+  })
+
+  it('applies a stash by id and keeps it, pops and drops by id', async () => {
+    const [newest, older] = await listStashes(sd)
+    expect(await stashApply(sd, older.sha, false)).toBe('ok')
+    expect(readFileSync(join(sd, 'new.txt'), 'utf8')).toBe('untracked\n')
+    expect(await listStashes(sd)).toHaveLength(2)
+    s('reset', '-q', '--hard')
+    s('clean', '-qfd')
+    expect(await stashApply(sd, older.sha, true)).toBe('ok')
+    expect((await listStashes(sd)).map((x) => x.sha)).toEqual([newest.sha])
+    s('reset', '-q', '--hard')
+    s('clean', '-qfd')
+    await stashDrop(sd, newest.sha)
+    expect(await listStashes(sd)).toEqual([])
+  })
+
+  it('reports conflicts when applying onto conflicting changes and refuses unknown stashes', async () => {
+    write('t.txt', 'stashed side\n')
+    await stashPush(sd, 'will conflict')
+    write('t.txt', 'committed side\n')
+    s('commit', '-q', '-am', 'diverge')
+    const [st] = await listStashes(sd)
+    expect(await stashApply(sd, st.sha, true)).toBe('conflicts')
+    expect(await listStashes(sd)).toHaveLength(1) // pop keeps the stash when it conflicts
+    s('reset', '-q', '--hard')
+    await expect(stashDrop(sd, 'a'.repeat(40))).rejects.toThrow(/no longer exists/)
+  })
+
+  it('refuses to stash when there is nothing to stash', async () => {
+    await expect(stashPush(sd, '')).rejects.toThrow(/nothing to stash/)
   })
 })

@@ -91,8 +91,10 @@ export async function openRepo(dir: string): Promise<RepoInfo> {
   ])
   const refs = parseRefs(refsOut.stdout)
   const head = { branch: branch.stdout.trim() || null, sha: sha.stdout.trim() || null }
-  const tips = [...new Set([...(head.sha ? [head.sha] : []), ...refs.map((r) => r.target)])]
-  return { path, head, refs, tips, operation: await currentOperation(path) }
+  // Stashes are listed separately; their internal index/untracked commits are not history.
+  const tips = [...new Set([...(head.sha ? [head.sha] : []), ...refs.filter((r) => r.kind !== 'stash').map((r) => r.target)])]
+  const [operation, stashes] = await Promise.all([currentOperation(path), listStashes(path)])
+  return { path, head, refs, tips, operation, stashes }
 }
 
 // Pages over a fixed set of tips so commits made between pages cannot shift the order.
@@ -393,4 +395,31 @@ export async function resolveConflict(repo: string, path: string, resolution: Re
     await run([LITERAL, 'checkout', `--${resolution.side}`, '--', path], repo)
   }
   await stage(repo, [path])
+}
+
+// ---- stashes (addressed by commit id; stash@{n} shifts whenever the list changes) ----
+
+export async function listStashes(repo: string): Promise<Commit[]> {
+  return parseLog((await run(['stash', 'list', '-z', `--format=${LOG_FORMAT}`], repo)).stdout)
+}
+
+async function stashRef(repo: string, sha: string): Promise<string> {
+  assertRevision(sha)
+  const i = (await listStashes(repo)).findIndex((s) => s.sha === sha)
+  if (i === -1) throw new GitError('stash no longer exists')
+  return `stash@{${i}}`
+}
+
+// Stashes tracked and untracked changes (git's "WIP on <branch>" message when empty).
+export async function stashPush(repo: string, message: string): Promise<void> {
+  if (!(await run(['status', '--porcelain'], repo)).stdout) throw new GitError('nothing to stash')
+  await run(['stash', 'push', '--include-untracked', ...(message ? [`--message=${message}`] : [])], repo)
+}
+
+export async function stashApply(repo: string, sha: string, pop: boolean): Promise<'ok' | 'conflicts'> {
+  return mayConflict(repo, ['stash', pop ? 'pop' : 'apply', await stashRef(repo, sha)])
+}
+
+export async function stashDrop(repo: string, sha: string): Promise<void> {
+  await run(['stash', 'drop', await stashRef(repo, sha)], repo)
 }

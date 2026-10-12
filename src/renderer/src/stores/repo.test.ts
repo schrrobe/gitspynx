@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import type { Commit, RepoInfo } from '../../../shared/types'
 import { useRepo, WIP } from './repo'
 
-const info: RepoInfo = { path: '/r', head: { branch: 'main', sha: 'a0' }, refs: [], tips: ['a0'], operation: null }
+const info: RepoInfo = { path: '/r', head: { branch: 'main', sha: 'a0' }, refs: [], tips: ['a0'], operation: null, stashes: [] }
 const page = (prefix: string, n = 2000): Commit[] =>
   Array.from({ length: n }, (_, i) => ({
     sha: `${prefix}${i}`,
@@ -315,6 +315,44 @@ describe('repo store', () => {
       await repo.resolve({ side: 'theirs' })
       expect(resolved).toEqual(['f.txt', { side: 'theirs' }])
       expect(repo.conflict).toBeNull()
+    })
+  })
+
+  describe('stashes', () => {
+    async function opened(stashes: { sha: string }[]) {
+      const repo = useRepo()
+      ;(globalThis as unknown as { window: { gitspynx: Record<string, unknown> } }).window.gitspynx.openRepo = async () => ({ ...info, stashes })
+      const first = repo.open('/r')
+      await flush()
+      logCalls[0].d.resolve(page('c', 3))
+      await first
+      const w = (globalThis as unknown as { window: { gitspynx: Record<string, unknown> } }).window
+      w.gitspynx.readLog = async () => page('c', 3)
+      return { repo, w }
+    }
+
+    it('pops the newest stash from the toolbar', async () => {
+      const { repo, w } = await opened([{ sha: 's1' }, { sha: 's0' }])
+      let call: unknown = null
+      w.gitspynx.stashApply = async (_r: string, sha: string, pop: boolean) => ((call = [sha, pop]), 'ok')
+      await repo.popLatestStash()
+      expect(call).toEqual(['s1', true])
+    })
+
+    it('asks before dropping a stash', async () => {
+      const { repo, w } = await opened([{ sha: 's1' }])
+      let dropped = false
+      w.gitspynx.confirm = async () => false
+      w.gitspynx.stashDrop = async () => void (dropped = true)
+      await repo.dropStash('s1')
+      expect(dropped).toBe(false)
+    })
+
+    it('shows the working directory when applying a stash conflicts', async () => {
+      const { repo, w } = await opened([{ sha: 's1' }])
+      w.gitspynx.stashApply = async () => 'conflicts'
+      await repo.applyStash('s1', false)
+      expect(repo.selected).toBe(WIP)
     })
   })
 })

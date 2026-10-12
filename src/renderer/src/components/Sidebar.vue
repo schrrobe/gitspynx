@@ -43,10 +43,22 @@ const sections = computed(() => {
   return [
     { title: 'Lokal', refs: of('local') },
     { title: 'Remote', refs: of('remote') },
-    { title: 'Tags', refs: of('tag') },
-    { title: 'Stash', refs: of('stash') }
+    { title: 'Tags', refs: of('tag') }
   ].filter((s) => s.refs.length)
 })
+
+async function stashMenu(sha: string) {
+  repo.select(sha)
+  const id = await window.gitspynx.showContextMenu([
+    { id: 'apply', label: 'Anwenden' },
+    { id: 'pop', label: 'Anwenden und löschen (Pop)' },
+    { separator: true },
+    { id: 'drop', label: 'Löschen…' }
+  ])
+  if (id === 'apply') repo.applyStash(sha, false)
+  else if (id === 'pop') repo.applyStash(sha, true)
+  else if (id === 'drop') repo.dropStash(sha)
+}
 </script>
 
 <template>
@@ -65,6 +77,20 @@ const sections = computed(() => {
       >
         <span class="name">{{ r.name }}</span>
         <span v-if="r.ahead || r.behind" class="dim mono">↑{{ r.ahead }} ↓{{ r.behind }}</span>
+      </button>
+    </section>
+    <section v-if="repo.info?.stashes.length">
+      <h3>Stashes <span class="dim">{{ repo.info.stashes.length }}</span></h3>
+      <button
+        v-for="st in repo.info.stashes"
+        :key="st.sha"
+        class="item"
+        :title="`${st.subject} – Doppelklick zum Anwenden`"
+        @click="repo.select(st.sha)"
+        @dblclick="repo.applyStash(st.sha, false)"
+        @contextmenu.prevent="stashMenu(st.sha)"
+      >
+        <span class="name">{{ st.subject.replace(/^On [^:]+: /, '') }}</span>
       </button>
     </section>
   </nav>

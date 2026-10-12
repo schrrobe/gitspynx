@@ -8,6 +8,7 @@ import OperationBar from './components/OperationBar.vue'
 import Sidebar from './components/Sidebar.vue'
 import PromptDialog from './components/PromptDialog.vue'
 import WorkdirPanel from './components/WorkdirPanel.vue'
+import { ask } from './prompt'
 import { useRepo, WIP } from './stores/repo'
 
 const repo = useRepo()
@@ -32,6 +33,11 @@ async function pullMenu() {
     { id: 'merge', label: 'Pull mit Merge' }
   ])
   if (mode) repo.pullBranch(mode as 'ff-only' | 'rebase' | 'merge')
+}
+
+async function stashWithMessage() {
+  const message = await ask('Stash-Nachricht', '', 'Stashen')
+  if (message) repo.stash(message)
 }
 
 async function closeRepo() {
@@ -74,6 +80,10 @@ async function pick() {
         <button :disabled="!!repo.busy || !repo.info.head.branch" @click="repo.pushBranch()">
           {{ repo.busy === 'push' ? 'Push…' : 'Push' }}<span v-if="headRef?.ahead" class="count"> ↑{{ headRef.ahead }}</span>
         </button>
+      </div>
+      <div class="group" role="group" aria-label="Stash">
+        <button :disabled="!!repo.busy || !repo.status.length" title="Rechtsklick: mit Nachricht" @click="repo.stash()" @contextmenu.prevent="stashWithMessage">Stash</button>
+        <button :disabled="!!repo.busy || !repo.info.stashes.length" @click="repo.popLatestStash()">Pop</button>
       </div>
       <button @click="repo.refresh()">Aktualisieren</button>
       <button @click="pick">Öffnen…</button>
