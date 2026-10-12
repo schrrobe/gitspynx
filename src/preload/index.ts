@@ -16,6 +16,10 @@ const methods: (keyof GitspynxApi)[] = [
   'checkout',
   'renameBranch',
   'deleteBranch',
+  'fetch',
+  'pull',
+  'push',
+  'deleteRemoteBranch',
   'showContextMenu',
   'confirm'
 ]

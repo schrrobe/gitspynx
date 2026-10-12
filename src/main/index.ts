@@ -8,8 +8,13 @@ import {
   commit,
   createBranch,
   deleteBranch,
+  deleteRemoteBranch,
+  fetchAll,
   GitError,
+  isRejectedPush,
   openRepo,
+  pull,
+  push,
   readCommit,
   readFileDiff,
   readLog,
@@ -144,6 +149,21 @@ const handlers: Handlers = {
   checkout: (_s, repo, branch) => checkout(knownRepo(repo), str(branch)),
   renameBranch: (_s, repo, from, to) => renameBranch(knownRepo(repo), str(from), str(to)),
   deleteBranch: (_s, repo, name, force) => deleteBranch(knownRepo(repo), str(name), force === true),
+  fetch: (_s, repo) => fetchAll(knownRepo(repo)),
+  pull(_s, repo, mode) {
+    if (mode !== 'ff-only' && mode !== 'rebase' && mode !== 'merge') throw new GitError('invalid argument')
+    return pull(knownRepo(repo), mode)
+  },
+  async push(_s, repo, force) {
+    try {
+      await push(knownRepo(repo), force === true)
+      return 'ok'
+    } catch (e) {
+      if (isRejectedPush(e)) return 'rejected'
+      throw e
+    }
+  },
+  deleteRemoteBranch: (_s, repo, name) => deleteRemoteBranch(knownRepo(repo), str(name)),
   showContextMenu: (sender, items) => popupMenu(sender, menuItems(items)),
   async confirm(sender, message, detail, okLabel) {
     const window = BrowserWindow.fromWebContents(sender)!

@@ -18,6 +18,7 @@ export const useRepo = defineStore('repo', () => {
   const status = ref<FileStatus[]>([])
   const diffTarget = shallowRef<DiffTarget | null>(null) // shallow: identity is compared to drop stale diffs
   const diff = ref<FileDiff | null>(null)
+  const busy = ref<'fetch' | 'pull' | 'push' | null>(null) // running network operation
   // Bumped whenever the loaded history is replaced; results of older requests are dropped.
   let generation = 0
 
@@ -188,6 +189,35 @@ export const useRepo = defineStore('repo', () => {
     })
   }
 
+  async function network(kind: 'fetch' | 'pull' | 'push', op: (repo: string) => Promise<void>) {
+    if (busy.value) return
+    busy.value = kind
+    try {
+      await mutate(op)
+    } finally {
+      busy.value = null
+    }
+  }
+
+  const fetchAll = () => network('fetch', (r) => window.gitspynx.fetch(r))
+  const pullBranch = (mode: 'ff-only' | 'rebase' | 'merge' = 'ff-only') => network('pull', (r) => window.gitspynx.pull(r, mode))
+
+  const pushBranch = () =>
+    network('push', async (r) => {
+      if ((await window.gitspynx.push(r, false)) === 'ok') return
+      const force = await window.gitspynx.confirm(
+        'Push abgelehnt: Der Remote enthält Commits, die lokal fehlen.',
+        'Mit --force-with-lease überschreiben? Das gelingt nur, wenn seit dem letzten Fetch niemand weiter gepusht hat.',
+        'Force-Push'
+      )
+      if (force && (await window.gitspynx.push(r, true)) === 'rejected') throw new Error('Force-Push abgelehnt: Remote hat sich seit dem letzten Fetch geändert.')
+    })
+
+  async function deleteRemoteBranch(name: string) {
+    if (await window.gitspynx.confirm(`Branch „${name}“ auf dem Remote löschen?`, 'Das betrifft alle, die mit diesem Remote arbeiten.', 'Auf Remote löschen'))
+      await network('push', (r) => window.gitspynx.deleteRemoteBranch(r, name))
+  }
+
   const close = () => {
     generation++
     loading.value = false
@@ -200,6 +230,6 @@ export const useRepo = defineStore('repo', () => {
   return {
     info, commits, complete, loading, error, selected, detail, status, staged, unstaged, diffTarget, diff,
     graph, refsBySha, open, refresh, loadMore, select, refreshStatus, openDiff, closeDiff, stage, unstage, commit, close,
-    checkoutBranch, createBranch, renameBranch, deleteBranch
+    checkoutBranch, createBranch, renameBranch, deleteBranch, busy, fetchAll, pullBranch, pushBranch, deleteRemoteBranch
   }
 })

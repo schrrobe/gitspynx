@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import CommitDetail from './components/CommitDetail.vue'
 import CommitList from './components/CommitList.vue'
 import DiffView from './components/DiffView.vue'
@@ -20,6 +20,17 @@ const stopWatching = window.gitspynx.onRepoChanged(({ repo: path, git }) => {
   else repo.refreshStatus()
 })
 onUnmounted(stopWatching)
+
+const headRef = computed(() => repo.info?.refs.find((r) => r.kind === 'local' && r.name === repo.info?.head.branch))
+
+async function pullMenu() {
+  const mode = await window.gitspynx.showContextMenu([
+    { id: 'ff-only', label: 'Pull (nur Fast-Forward)' },
+    { id: 'rebase', label: 'Pull mit Rebase' },
+    { id: 'merge', label: 'Pull mit Merge' }
+  ])
+  if (mode) repo.pullBranch(mode as 'ff-only' | 'rebase' | 'merge')
+}
 
 async function pick() {
   const path = await window.gitspynx.pickRepo()
@@ -48,6 +59,15 @@ async function pick() {
       <span class="dim">{{ repo.info.head.branch ?? 'detached HEAD' }}</span>
       <span class="spacer" />
       <span v-if="repo.error" class="error" role="alert">{{ repo.error }}</span>
+      <div class="group" role="group" aria-label="Remote">
+        <button :disabled="!!repo.busy" @click="repo.fetchAll()">{{ repo.busy === 'fetch' ? 'Fetch…' : 'Fetch' }}</button>
+        <button :disabled="!!repo.busy || !repo.info.head.branch" title="Rechtsklick: Pull-Modus wählen" @click="repo.pullBranch()" @contextmenu.prevent="pullMenu">
+          {{ repo.busy === 'pull' ? 'Pull…' : 'Pull' }}<span v-if="headRef?.behind" class="count"> ↓{{ headRef.behind }}</span>
+        </button>
+        <button :disabled="!!repo.busy || !repo.info.head.branch" @click="repo.pushBranch()">
+          {{ repo.busy === 'push' ? 'Push…' : 'Push' }}<span v-if="headRef?.ahead" class="count"> ↑{{ headRef.ahead }}</span>
+        </button>
+      </div>
       <button @click="repo.refresh()">Aktualisieren</button>
       <button @click="pick">Öffnen…</button>
       <button @click="repo.close()">Schließen</button>
@@ -84,6 +104,12 @@ async function pick() {
   background: var(--bg-panel);
 }
 .spacer { flex: 1; }
+.group { display: flex; }
+.group button { border-radius: 0; margin-left: -1px; }
+.group button:first-child { border-radius: 6px 0 0 6px; margin-left: 0; }
+.group button:last-child { border-radius: 0 6px 6px 0; }
+.group button:hover { position: relative; }
+.count { color: var(--accent); font-variant-numeric: tabular-nums; }
 .sidebar { grid-area: side; }
 .list { grid-area: list; }
 .detail { grid-area: detail; min-height: 0; }

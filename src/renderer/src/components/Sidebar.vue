@@ -13,12 +13,14 @@ async function menu(r: Ref) {
     { id: 'create', label: 'Branch hier erstellen…' },
     ...(r.kind === 'local'
       ? [{ id: 'rename', label: 'Umbenennen…' }, { separator: true as const }, { id: 'delete', label: 'Löschen…', enabled: !isHead(r) }]
-      : [])
+      : []),
+    ...(r.kind === 'remote' ? [{ separator: true as const }, { id: 'delete-remote', label: 'Auf Remote löschen…' }] : [])
   ])
   if (id === 'checkout') repo.checkoutBranch(r.name)
   else if (id === 'create') repo.createBranch(r.target)
   else if (id === 'rename') repo.renameBranch(r.name)
   else if (id === 'delete') repo.deleteBranch(r.name)
+  else if (id === 'delete-remote') repo.deleteRemoteBranch(r.name)
 }
 
 function open(r: Ref) {

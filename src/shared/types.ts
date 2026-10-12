@@ -53,6 +53,10 @@ export interface GitspynxApi {
   checkout(repo: string, branch: string): Promise<void>
   renameBranch(repo: string, from: string, to: string): Promise<void>
   deleteBranch(repo: string, name: string, force: boolean): Promise<void>
+  fetch(repo: string): Promise<void>
+  pull(repo: string, mode: 'ff-only' | 'rebase' | 'merge'): Promise<void>
+  push(repo: string, force: boolean): Promise<'ok' | 'rejected'> // rejected = remote has commits we don't
+  deleteRemoteBranch(repo: string, remoteBranch: string): Promise<void>
   showContextMenu(items: MenuItem[]): Promise<string | null> // id of the clicked item
   confirm(message: string, detail: string, okLabel: string): Promise<boolean>
 }

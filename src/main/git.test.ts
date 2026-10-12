@@ -9,8 +9,13 @@ import {
   commit,
   createBranch,
   deleteBranch,
+  deleteRemoteBranch,
+  fetchAll,
   GitError,
+  isRejectedPush,
   openRepo,
+  pull,
+  push,
   readCommit,
   readFileDiff,
   readLog,
@@ -249,5 +254,83 @@ describe('branches', () => {
     await expect(createBranch(bd, '-D', head, false)).rejects.toBeInstanceOf(GitError)
     await expect(createBranch(bd, 'bad..name', head, false)).rejects.toBeInstanceOf(GitError)
     await expect(checkout(bd, '--orphan=x')).rejects.toBeInstanceOf(GitError)
+  })
+})
+
+describe('remotes', () => {
+  let root: string
+  let remote: string
+  let a: string // clone used through the API
+  let b: string // second clone simulating a colleague
+  const at = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, env }).toString().trim()
+
+  beforeAll(() => {
+    root = mkdtempSync(join(tmpdir(), 'gitspynx-remote-'))
+    remote = join(root, 'remote.git')
+    execFileSync('git', ['init', '-q', '--bare', '-b', 'main', remote], { env })
+    const seed = join(root, 'seed')
+    execFileSync('git', ['clone', '-q', remote, seed], { env })
+    at(seed, 'commit', '-q', '--allow-empty', '-m', 'seed')
+    at(seed, 'push', '-q', 'origin', 'main')
+    a = join(root, 'a')
+    b = join(root, 'b')
+    execFileSync('git', ['clone', '-q', remote, a], { env })
+    execFileSync('git', ['clone', '-q', remote, b], { env })
+  })
+  afterAll(() => rmSync(root, { recursive: true, force: true }))
+
+  it('fetches new commits and pulls them fast-forward', async () => {
+    at(b, 'commit', '-q', '--allow-empty', '-m', 'from b')
+    at(b, 'push', '-q', 'origin', 'main')
+    await fetchAll(a)
+    expect(at(a, 'rev-list', '--count', 'main..origin/main')).toBe('1')
+    await pull(a, 'ff-only')
+    expect(at(a, 'log', '-1', '--format=%s')).toBe('from b')
+  })
+
+  it('pushes the current branch and sets an upstream for a new branch', async () => {
+    at(a, 'switch', '-q', '-c', 'topic')
+    at(a, 'commit', '-q', '--allow-empty', '-m', 'topic work')
+    await push(a, false)
+    expect(at(a, 'rev-parse', '--abbrev-ref', 'topic@{upstream}')).toBe('origin/topic')
+    expect(at(remote, 'log', '-1', '--format=%s', 'topic')).toBe('topic work')
+  })
+
+  it('reports a rejected push and allows a forced push with lease', async () => {
+    at(b, 'fetch', '-q')
+    at(b, 'switch', '-q', 'topic')
+    at(b, 'commit', '-q', '--allow-empty', '-m', 'b on topic')
+    at(b, 'push', '-q')
+    at(a, 'commit', '--amend', '-q', '--allow-empty', '-m', 'topic work rewritten')
+    await fetchAll(a)
+    const err = await push(a, false).catch((e) => e)
+    expect(err).toBeInstanceOf(GitError)
+    expect(isRejectedPush(err)).toBe(true)
+    await push(a, true)
+    expect(at(remote, 'log', '-1', '--format=%s', 'topic')).toBe('topic work rewritten')
+  })
+
+  it('refuses ff-only pull when histories diverged', async () => {
+    at(b, 'switch', '-q', 'main')
+    at(b, 'commit', '-q', '--allow-empty', '-m', 'b main again')
+    at(b, 'push', '-q', 'origin', 'main')
+    at(a, 'switch', '-q', 'main')
+    at(a, 'commit', '-q', '--allow-empty', '-m', 'a main local')
+    await expect(pull(a, 'ff-only')).rejects.toBeInstanceOf(GitError)
+    await pull(a, 'rebase')
+    expect(at(a, 'log', '-2', '--format=%s').split('\n')).toEqual(['a main local', 'b main again'])
+  })
+
+  it('deletes a branch on the remote', async () => {
+    await deleteRemoteBranch(a, 'origin/topic')
+    expect(at(remote, 'branch', '--list', 'topic')).toBe('')
+  })
+
+  it('fails with a clear message when there is no remote', async () => {
+    const lonely = mkdtempSync(join(tmpdir(), 'gitspynx-noremote-'))
+    at(lonely, 'init', '-q', '-b', 'main')
+    at(lonely, 'commit', '-q', '--allow-empty', '-m', 'x')
+    await expect(push(lonely, false)).rejects.toThrow(/no remote/)
+    rmSync(lonely, { recursive: true })
   })
 })

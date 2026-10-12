@@ -15,7 +15,7 @@ interface Result {
 }
 
 // Runs git without a shell. Exit codes listed in okCodes are returned instead of thrown.
-export function run(args: string[], cwd: string, okCodes = [0], stdin?: string): Promise<Result> {
+export function run(args: string[], cwd: string, okCodes = [0], stdin?: string, timeout = 0): Promise<Result> {
   return new Promise((resolve, reject) => {
     const child = execFile(
       'git',
@@ -23,12 +23,14 @@ export function run(args: string[], cwd: string, okCodes = [0], stdin?: string):
       {
         cwd,
         maxBuffer: 256 * 1024 * 1024,
+        timeout,
         // literal pathspecs: renderer-supplied paths never act as globs or :(magic)
         env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_LITERAL_PATHSPECS: '1', LC_ALL: 'C' }
       },
       (err, stdout, stderr) => {
         const code = err ? (typeof err.code === 'number' ? err.code : -1) : 0
         if (okCodes.includes(code)) return resolve({ code, stdout })
+        if (err?.killed) return reject(new GitError(`git ${args[0]} timed out after ${timeout / 1000}s`, code, stderr))
         reject(new GitError(stderr.trim() || err?.message || 'git failed', code, stderr))
       }
     )
@@ -158,4 +160,55 @@ export async function renameBranch(repo: string, from: string, to: string): Prom
 export async function deleteBranch(repo: string, name: string, force: boolean): Promise<void> {
   await assertBranchName(repo, name)
   await run(['branch', force ? '-D' : '-d', name], repo)
+}
+
+const NETWORK_TIMEOUT = 120_000
+
+export async function fetchAll(repo: string): Promise<void> {
+  await run(['fetch', '--all', '--prune', '--quiet'], repo, [0], undefined, NETWORK_TIMEOUT)
+}
+
+export type PullMode = 'ff-only' | 'rebase' | 'merge'
+
+export async function pull(repo: string, mode: PullMode): Promise<void> {
+  const flag = { 'ff-only': '--ff-only', rebase: '--rebase', merge: '--no-rebase' }[mode]
+  await run(['pull', flag, '--quiet'], repo, [0], undefined, NETWORK_TIMEOUT)
+}
+
+async function remotes(repo: string): Promise<string[]> {
+  return (await run(['remote'], repo)).stdout.split('\n').filter(Boolean)
+}
+
+async function config(repo: string, key: string): Promise<string> {
+  return (await run(['config', '--get', key], repo, [0, 1])).stdout.trim()
+}
+
+// Pushes the current branch to its upstream, or to origin (else the first remote) with -u.
+export async function push(repo: string, force: boolean): Promise<void> {
+  const branch = (await run(['symbolic-ref', '-q', '--short', 'HEAD'], repo, [0, 1])).stdout.trim()
+  if (!branch) throw new GitError('cannot push a detached HEAD')
+  const lease = force ? ['--force-with-lease'] : []
+  const remote = await config(repo, `branch.${branch}.remote`)
+  const merge = await config(repo, `branch.${branch}.merge`)
+  if (remote && merge) {
+    await run(['push', ...lease, remote, `refs/heads/${branch}:${merge}`], repo, [0], undefined, NETWORK_TIMEOUT)
+    return
+  }
+  const all = await remotes(repo)
+  if (!all.length) throw new GitError('no remote configured')
+  const target = all.includes('origin') ? 'origin' : all[0]
+  await run(['push', '-u', ...lease, target, `refs/heads/${branch}:refs/heads/${branch}`], repo, [0], undefined, NETWORK_TIMEOUT)
+}
+
+export function isRejectedPush(e: unknown): boolean {
+  return e instanceof GitError && /\[rejected\]|non-fast-forward|fetch first|stale info/.test(e.stderr)
+}
+
+// remoteBranch like "origin/feature/x"
+export async function deleteRemoteBranch(repo: string, remoteBranch: string): Promise<void> {
+  const remote = (await remotes(repo)).find((r) => remoteBranch.startsWith(`${r}/`))
+  if (!remote) throw new GitError(`unknown remote branch: ${remoteBranch}`)
+  const branch = remoteBranch.slice(remote.length + 1)
+  await assertBranchName(repo, branch)
+  await run(['push', remote, '--delete', `refs/heads/${branch}`], repo, [0], undefined, NETWORK_TIMEOUT)
 }

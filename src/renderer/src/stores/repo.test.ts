@@ -149,4 +149,40 @@ describe('repo store', () => {
       expect(calls).toEqual([['x', false]])
     })
   })
+
+  describe('pushBranch', () => {
+    async function setup(results: ('ok' | 'rejected')[], confirms: boolean[]) {
+      const repo = useRepo()
+      const first = repo.open('/r')
+      await flush()
+      logCalls[0].d.resolve(page('c', 3))
+      await first
+      const calls: boolean[] = []
+      const w = (globalThis as unknown as { window: { gitspynx: Record<string, unknown> } }).window
+      w.gitspynx.push = async (_r: string, force: boolean) => (calls.push(force), results.shift())
+      w.gitspynx.confirm = async () => confirms.shift() ?? false
+      w.gitspynx.readLog = async () => page('c', 3)
+      return { repo, calls }
+    }
+
+    it('pushes once when the remote accepts', async () => {
+      const { repo, calls } = await setup(['ok'], [])
+      await repo.pushBranch()
+      expect(calls).toEqual([false])
+      expect(repo.busy).toBeNull()
+    })
+
+    it('offers a force-with-lease push after a rejection', async () => {
+      const { repo, calls } = await setup(['rejected', 'ok'], [true])
+      await repo.pushBranch()
+      expect(calls).toEqual([false, true])
+    })
+
+    it('does not force when the user declines', async () => {
+      const { repo, calls } = await setup(['rejected'], [false])
+      await repo.pushBranch()
+      expect(calls).toEqual([false])
+      expect(repo.error).toBeNull()
+    })
+  })
 })
