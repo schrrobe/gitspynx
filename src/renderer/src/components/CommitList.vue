@@ -41,6 +41,7 @@ async function menu(sha: string) {
           { id: 'rebase', label: `„${head}“ hierauf rebasen…` }
         ]
       : []),
+    ...(head && !onHead && !repo.info?.operation ? [{ id: 'interactive', label: 'Interaktiver Rebase ab hier…' }] : []),
     { separator: true },
     { id: 'copy', label: 'SHA kopieren' }
   ])
@@ -48,6 +49,7 @@ async function menu(sha: string) {
   else if (id === 'cherry-pick') repo.cherryPick(sha)
   else if (id === 'merge') repo.mergeInto(sha)
   else if (id === 'rebase') repo.rebaseOnto(sha)
+  else if (id === 'interactive') repo.openRebasePlan(sha)
   else if (id === 'copy') navigator.clipboard.writeText(sha)
 }
 

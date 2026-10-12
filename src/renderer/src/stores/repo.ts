@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref, shallowRef } from 'vue'
-import { type Commit, type CommitDetail, type ConflictVersions, type DiffTarget, type FileDiff, type FileStatus, type HunkSelection, MAX_LOG_PAGE, type RepoInfo, type Resolution } from '../../../shared/types'
+import { type Commit, type CommitDetail, type ConflictVersions, type DiffTarget, type FileDiff, type FileStatus, type HunkSelection, MAX_LOG_PAGE, type RebaseStep, type RepoInfo, type Resolution } from '../../../shared/types'
 import { layoutGraph } from '../graph/layout'
 import { ask } from '../prompt'
 
@@ -29,6 +29,7 @@ export const useRepo = defineStore('repo', () => {
   const busyByPath = shallowRef(new Map<string, NetworkKind>()) // running network operation per repo
   const busy = computed(() => (info.value && busyByPath.value.get(info.value.path)) || null)
   const conflict = shallowRef<{ path: string; versions: ConflictVersions } | null>(null)
+  const rebasePlan = shallowRef<{ base: string; commits: Commit[] } | null>(null) // open interactive-rebase dialog
   const hidden = shallowRef(new Set<string>()) // fullNames of refs whose history is hidden
   const solo = ref<string | null>(null) // fullName of the only ref shown
   // Bumped whenever the loaded history is replaced; results of older requests are dropped.
@@ -201,6 +202,19 @@ export const useRepo = defineStore('repo', () => {
       await window.gitspynx.unstage(info.value!.path, paths)
       await refreshStatus()
     })
+
+  const openRebasePlan = (base: string) =>
+    guard(async () => {
+      if (!info.value || busy.value) return
+      rebasePlan.value = { base, commits: await window.gitspynx.readRebasePlan(info.value.path, base) }
+    })
+
+  async function startRebase(steps: RebaseStep[]) {
+    const plan = rebasePlan.value
+    if (!plan) return
+    rebasePlan.value = null
+    await integrate((r) => window.gitspynx.interactiveRebase(r, plan.base, steps))
+  }
 
   const stageHunk = (sel: Omit<HunkSelection, 'path' | 'staged'>) =>
     guard(async () => {
@@ -414,6 +428,7 @@ export const useRepo = defineStore('repo', () => {
 
   const close = () => {
     void window.gitspynx.closeRepo()
+    rebasePlan.value = null
     error.value = null
     notice.value = null
     hidden.value = new Set()
@@ -432,6 +447,6 @@ export const useRepo = defineStore('repo', () => {
     graph, refsBySha, open, refresh, loadMore, select, refreshStatus, openDiff, closeDiff, stage, unstage, commit, close,
     checkoutBranch, createBranch, renameBranch, deleteBranch, busy, fetchAll, pullBranch, pushBranch, deleteRemoteBranch,
     conflict, mergeInto, rebaseOnto, cherryPick, continueOp, skipOp, abortOp, openConflict, resolve,
-    stash, applyStash, popLatestStash, dropStash, stageHunk, hidden, solo, toggleHidden, toggleSolo, resetFilters, loadAll
+    stash, applyStash, popLatestStash, dropStash, stageHunk, rebasePlan, openRebasePlan, startRebase, hidden, solo, toggleHidden, toggleSolo, resetFilters, loadAll
   }
 })

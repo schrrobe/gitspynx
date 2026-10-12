@@ -13,6 +13,7 @@ import DiffView from './components/DiffView.vue'
 import OperationBar from './components/OperationBar.vue'
 import Sidebar from './components/Sidebar.vue'
 import PromptDialog from './components/PromptDialog.vue'
+import RebaseDialog from './components/RebaseDialog.vue'
 import TabStrip from './components/TabStrip.vue'
 import WorkdirPanel from './components/WorkdirPanel.vue'
 import { ask } from './prompt'
@@ -152,6 +153,7 @@ async function deleteWorkspace(name: string) {
     <CommitDetail v-else class="detail" />
   </div>
   <PromptDialog />
+  <RebaseDialog />
   <CommandPalette :commands="commands" :shortcuts="keymap.byCommand" />
   <SettingsDialog :commands="commands" />
 </template>

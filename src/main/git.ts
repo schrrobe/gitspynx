@@ -1,8 +1,8 @@
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { lstat, readFile, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve, sep } from 'node:path'
-import type { Commit, CommitDetail, ConflictVersions, DiffTarget, FileDiff, FileStatus, HunkSelection, Operation, RepoInfo, Resolution } from '../shared/types'
+import type { Commit, CommitDetail, ConflictVersions, DiffTarget, FileDiff, FileStatus, HunkSelection, Operation, RebaseStep, RepoInfo, Resolution } from '../shared/types'
 import { buildPatch } from './patch'
 import { LOG_FORMAT, parseDiff, parseLog, parseNameStatus, parseRefs, parseStatus, REF_FORMAT } from './parse'
 
@@ -440,4 +440,50 @@ export async function stageHunk(repo: string, sel: HunkSelection): Promise<void>
     throw new GitError((e as Error).message)
   }
   await run(['apply', '--cached', '--recount', ...(sel.staged ? ['--reverse'] : []), '-'], repo, [0], patch)
+}
+
+// ---- interactive rebase ----
+
+export async function readRebasePlan(repo: string, base: string): Promise<Commit[]> {
+  assertRevision(base)
+  if ((await run(['merge-base', '--is-ancestor', base, 'HEAD'], repo, [0, 1])).code !== 0)
+    throw new GitError('the selected commit is not an ancestor of HEAD')
+  if ((await run(['rev-list', '--merges', `${base}..HEAD`], repo)).stdout.trim())
+    throw new GitError('the range contains merge commits; rebasing merges interactively is not supported')
+  return parseLog((await run(['log', '-z', '--reverse', `--format=${LOG_FORMAT}`, `${base}..HEAD`], repo)).stdout)
+}
+
+const shellQuote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`
+
+// Runs `git rebase -i base` with a todo list built here from a validated plan (exactly the commits
+// after base, each once). git gets the list through sequence.editor = "cp <our file>"; rewording
+// is a pick followed by an amend with the new message from a file. Files live in the git dir
+// because a rebase that stops on conflicts still needs them when it continues.
+export async function interactiveRebase(repo: string, base: string, steps: RebaseStep[]): Promise<'ok' | 'conflicts'> {
+  const commits = await readRebasePlan(repo, base)
+  const expected = new Set(commits.map((c) => c.sha))
+  const seen = new Set(steps.map((s) => s.sha))
+  if (steps.length !== expected.size || seen.size !== steps.length || steps.some((s) => !expected.has(s.sha)))
+    throw new GitError('the rebase plan does not match the commits after the selected commit')
+  const first = steps.find((s) => s.action !== 'drop')
+  if (first && (first.action === 'squash' || first.action === 'fixup'))
+    throw new GitError('the first commit cannot be squashed or fixed up into a previous one')
+  if (steps.some((s) => s.action === 'reword' && !s.message?.trim())) throw new GitError('reword needs a commit message')
+
+  const dir = resolve(repo, (await run(['rev-parse', '--git-path', 'gitspynx-rebase'], repo)).stdout.trim())
+  await rm(dir, { recursive: true, force: true })
+  await mkdir(dir, { recursive: true })
+  const todo: string[] = []
+  for (const [i, s] of steps.entries()) {
+    if (s.action !== 'reword') {
+      todo.push(`${s.action} ${s.sha}`)
+      continue
+    }
+    const msg = join(dir, `message-${i}`)
+    await writeFile(msg, s.message!.trim() + '\n')
+    todo.push(`pick ${s.sha}`, `exec git commit --amend --only --allow-empty --quiet -F ${shellQuote(msg)}`)
+  }
+  const todoFile = join(dir, 'todo')
+  await writeFile(todoFile, todo.join('\n') + '\n')
+  return mayConflict(repo, ['-c', `sequence.editor=cp ${shellQuote(todoFile)}`, 'rebase', '-i', base])
 }

@@ -76,6 +76,8 @@ export interface GitspynxApi {
   unstage(repo: string, paths: string[]): Promise<void>
   readFileDiff(repo: string, target: DiffTarget): Promise<FileDiff>
   stageHunk(repo: string, selection: HunkSelection): Promise<void>
+  readRebasePlan(repo: string, base: string): Promise<Commit[]>
+  interactiveRebase(repo: string, base: string, steps: RebaseStep[]): Promise<'ok' | 'conflicts'>
   commit(repo: string, message: string, amend: boolean): Promise<void>
   createBranch(repo: string, name: string, start: string, switchTo: boolean): Promise<void>
   checkout(repo: string, branch: string): Promise<void>
@@ -153,4 +155,12 @@ export interface Session {
   tabs: string[] // open repositories (work tree paths), in tab order
   active: number
   workspaces: Workspace[]
+}
+
+export type RebaseAction = 'pick' | 'reword' | 'squash' | 'fixup' | 'drop'
+
+export interface RebaseStep {
+  sha: string
+  action: RebaseAction
+  message?: string // new message for reword
 }

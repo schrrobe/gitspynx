@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme } from 'electron'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { type DiffTarget, type GitspynxApi, type HunkSelection, MAX_LOG_PAGE, type MenuItem, type RepoChange, type Resolution, type Session } from '../shared/types'
+import { type DiffTarget, type GitspynxApi, type HunkSelection, type RebaseStep, MAX_LOG_PAGE, type MenuItem, type RepoChange, type Resolution, type Session } from '../shared/types'
 import {
   abortOperation,
   checkout,
@@ -14,6 +14,7 @@ import {
   fetchAll,
   GitError,
   gitDirsOutside,
+  interactiveRebase,
   isRejectedPush,
   merge,
   openRepo,
@@ -21,6 +22,7 @@ import {
   push,
   readCommit,
   readConflict,
+  readRebasePlan,
   readFileDiff,
   readLog,
   readStatus,
@@ -105,6 +107,17 @@ function hunkSelection(v: unknown): HunkSelection {
   const lines = h.lines === undefined ? undefined : Array.isArray(h.lines) ? h.lines.map((n) => int(n, 1_000_000)) : null
   if (lines === null) throw new GitError('invalid argument')
   return { path: str(h.path), staged: h.staged, hunk: int(h.hunk, 100_000), hunkHeader: h.hunkHeader, lines }
+}
+
+const ACTIONS = ['pick', 'reword', 'squash', 'fixup', 'drop'] as const
+function rebaseSteps(v: unknown): RebaseStep[] {
+  if (!Array.isArray(v) || v.length > 10_000) throw new GitError('invalid argument')
+  return v.map((x) => {
+    const s = x as Record<string, unknown> | null
+    if (!s || !ACTIONS.includes(s.action as RebaseStep['action'])) throw new GitError('invalid argument')
+    const message = typeof s.message === 'string' ? s.message.slice(0, 100_000) : undefined
+    return { sha: str(s.sha), action: s.action as RebaseStep['action'], message }
+  })
 }
 
 function resolution(v: unknown): Resolution {
@@ -226,6 +239,8 @@ const handlers: Handlers = {
   unstage: (_s, repo, p) => unstage(knownRepo(repo), paths(p)),
   readFileDiff: (_s, repo, target) => readFileDiff(knownRepo(repo), diffTarget(target)),
   stageHunk: (_s, repo, sel) => stageHunk(knownRepo(repo), hunkSelection(sel)),
+  readRebasePlan: (_s, repo, base) => readRebasePlan(knownRepo(repo), str(base)),
+  interactiveRebase: (_s, repo, base, steps) => interactiveRebase(knownRepo(repo), str(base), rebaseSteps(steps)),
   commit: (_s, repo, message, amend) => commit(knownRepo(repo), str(message), amend === true),
   createBranch: (_s, repo, name, start, switchTo) => createBranch(knownRepo(repo), str(name), str(start), switchTo === true),
   checkout: (_s, repo, branch) => checkout(knownRepo(repo), str(branch)),

@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import {
   abortOperation,
   assertRevision,
@@ -11,6 +11,7 @@ import {
   currentOperation,
   merge,
   readConflict,
+  readRebasePlan,
   rebase,
   resolveConflict,
   skipOperation,
@@ -21,6 +22,7 @@ import {
   deleteRemoteBranch,
   fetchAll,
   GitError,
+  interactiveRebase,
   isRejectedPush,
   openRepo,
   pull,
@@ -769,5 +771,100 @@ describe('hunk and line staging', () => {
     const d = await readFileDiff(hd, { path: 'new.txt', staged: false })
     await expect(stageHunk(hd, { path: 'new.txt', staged: false, hunk: 0, hunkHeader: d.hunks[0].header, lines: [0] })).rejects.toThrow(/untracked/)
     rmSync(join(hd, 'new.txt'))
+  })
+})
+
+describe('interactive rebase', () => {
+  let rd: string
+  const r = (...args: string[]) => execFileSync('git', args, { cwd: rd, env }).toString().trim()
+  let base: string
+  let c1: string, c2: string, c3: string
+
+  beforeEach(() => {
+    rd = mkdtempSync(join(tmpdir(), 'gitspynx-irebase-'))
+    r('init', '-q', '-b', 'main')
+    writeFileSync(join(rd, 'base.txt'), 'base\n')
+    r('add', '.')
+    r('commit', '-q', '-m', 'base')
+    base = r('rev-parse', 'HEAD')
+    for (const n of [1, 2, 3]) {
+      writeFileSync(join(rd, `f${n}.txt`), `${n}\n`)
+      r('add', '.')
+      r('commit', '-q', '-m', `commit ${n}`)
+    }
+    ;[c1, c2, c3] = ['HEAD~2', 'HEAD~1', 'HEAD'].map((x) => r('rev-parse', x))
+  })
+  afterEach(() => rmSync(rd, { recursive: true, force: true }))
+  const subjects = () => r('log', '--format=%s', `${base}..HEAD`).split('\n').filter(Boolean)
+
+  it('lists the commits after the base, oldest first', async () => {
+    expect((await readRebasePlan(rd, base)).map((c) => c.subject)).toEqual(['commit 1', 'commit 2', 'commit 3'])
+  })
+
+  it('reorders, rewords, squashes, fixes up and drops', async () => {
+    const result = await interactiveRebase(rd, base, [
+      { sha: c3, action: 'reword', message: 'third, reworded' },
+      { sha: c1, action: 'pick' },
+      { sha: c2, action: 'squash' }
+    ])
+    expect(result).toBe('ok')
+    expect(subjects()).toEqual(['commit 1', 'third, reworded'])
+    expect(r('log', '-1', '--format=%B')).toContain('commit 2')
+    expect(r('ls-files').split('\n').sort()).toEqual(['base.txt', 'f1.txt', 'f2.txt', 'f3.txt'])
+
+    await interactiveRebase(rd, base, [
+      { sha: r('rev-parse', 'HEAD~1'), action: 'pick' },
+      { sha: r('rev-parse', 'HEAD'), action: 'drop' }
+    ])
+    expect(subjects()).toEqual(['third, reworded'])
+  })
+
+  it('fixup keeps the first message', async () => {
+    await interactiveRebase(rd, base, [
+      { sha: c1, action: 'pick' },
+      { sha: c2, action: 'fixup' },
+      { sha: c3, action: 'pick' }
+    ])
+    expect(subjects()).toEqual(['commit 3', 'commit 1'])
+    expect(r('log', '-1', '--format=%B', 'HEAD~1')).toBe('commit 1')
+  })
+
+  it('rejects plans that do not match the commits after the base', async () => {
+    await expect(interactiveRebase(rd, base, [{ sha: c1, action: 'pick' }, { sha: c2, action: 'pick' }])).rejects.toThrow(/plan/)
+    await expect(
+      interactiveRebase(rd, base, [{ sha: c1, action: 'pick' }, { sha: c2, action: 'pick' }, { sha: base, action: 'pick' }])
+    ).rejects.toThrow(/plan/)
+    await expect(
+      interactiveRebase(rd, base, [{ sha: c1, action: 'squash' }, { sha: c2, action: 'pick' }, { sha: c3, action: 'pick' }])
+    ).rejects.toThrow(/first/)
+    await expect(
+      interactiveRebase(rd, base, [{ sha: c1, action: 'reword', message: ' ' }, { sha: c2, action: 'pick' }, { sha: c3, action: 'pick' }])
+    ).rejects.toThrow(/message/)
+  })
+
+  it('refuses ranges containing merge commits', async () => {
+    r('switch', '-q', '-c', 'side', c1)
+    writeFileSync(join(rd, 'side.txt'), 's\n')
+    r('add', '.')
+    r('commit', '-q', '-m', 'side')
+    r('switch', '-q', 'main')
+    r('merge', '-q', '--no-ff', '-m', 'merge side', 'side')
+    await expect(readRebasePlan(rd, base)).rejects.toThrow(/merge/)
+  })
+
+  it('stops on conflicts like any rebase', async () => {
+    writeFileSync(join(rd, 'f1.txt'), 'changed by 3\n')
+    r('commit', '-q', '-am', 'commit 4 touches f1')
+    const c4 = r('rev-parse', 'HEAD')
+    // move commit 4 before commit 1: f1.txt does not exist yet there
+    const result = await interactiveRebase(rd, base, [
+      { sha: c4, action: 'pick' },
+      { sha: c1, action: 'pick' },
+      { sha: c2, action: 'pick' },
+      { sha: c3, action: 'pick' }
+    ])
+    expect(result).toBe('conflicts')
+    expect((await openRepo(rd)).operation).toBe('rebase')
+    await abortOperation(rd)
   })
 })
