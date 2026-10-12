@@ -13,10 +13,10 @@ const recent = ref<string[]>([])
 
 onMounted(async () => (recent.value = await window.gitspynx.recentRepos()))
 
-// File changes on disk: refs/HEAD changes reload history, work tree changes only the status.
-const stopWatching = window.gitspynx.onRepoChanged(({ repo: path, git }) => {
+// File changes on disk: refs/HEAD changes reload history, work tree/index changes only the status.
+const stopWatching = window.gitspynx.onRepoChanged(({ repo: path, kind }) => {
   if (path !== repo.info?.path) return
-  if (git) repo.refresh()
+  if (kind === 'history') repo.refresh()
   else repo.refreshStatus()
 })
 onUnmounted(stopWatching)

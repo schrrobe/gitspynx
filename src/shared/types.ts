@@ -63,10 +63,10 @@ export interface GitspynxApi {
 
 export type MenuItem = { id: string; label: string; enabled?: boolean } | { separator: true }
 
-// Pushed from main whenever files in the open repository change; git = something under .git/ changed.
+// Pushed from main when files in the open repository change: refs/HEAD (history) or files/index (status).
 export interface RepoChange {
   repo: string
-  git: boolean
+  kind: 'status' | 'history'
 }
 
 export type GitspynxBridge = GitspynxApi & { onRepoChanged(cb: (change: RepoChange) => void): () => void }

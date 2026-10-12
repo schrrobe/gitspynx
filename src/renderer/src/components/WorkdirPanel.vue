@@ -56,7 +56,7 @@ async function submit() {
     <section class="files">
       <header>
         <h3>Gestaged <span class="dim">{{ repo.staged.length }}</span></h3>
-        <button v-if="repo.staged.length" @click="repo.unstage(repo.staged.map((f) => f.path))">Alle unstagen</button>
+        <button v-if="repo.staged.length" @click="repo.unstageFiles(repo.staged)">Alle unstagen</button>
       </header>
       <ul>
         <li v-for="f in repo.staged" :key="f.path" :class="{ open: isOpen(f, true) }">
@@ -64,7 +64,7 @@ async function submit() {
             <span class="status mono" :class="f.staged ?? ''">{{ f.staged }}</span>
             <span class="path">{{ f.path }}</span>
           </button>
-          <button class="act" :aria-label="`${f.path} unstagen`" @click="repo.unstage([f.path])">Unstage</button>
+          <button class="act" :aria-label="`${f.path} unstagen`" @click="repo.unstageFiles([f])">Unstage</button>
         </li>
       </ul>
     </section>

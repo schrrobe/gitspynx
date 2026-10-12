@@ -98,7 +98,24 @@ export const useRepo = defineStore('repo', () => {
       if (selected.value === sha) detail.value = d // ignore stale responses
     })
 
-  const refreshStatus = () =>
+  // Calls arriving while a refresh runs share it plus one follow-up run (watcher bursts, stage clicks).
+  let statusRun: Promise<void> | null = null
+  let statusAgain = false
+  function refreshStatus(): Promise<void> {
+    if (statusRun) {
+      statusAgain = true
+      return statusRun
+    }
+    statusRun = (async () => {
+      do {
+        statusAgain = false
+        await readStatusOnce()
+      } while (statusAgain)
+    })().finally(() => (statusRun = null))
+    return statusRun
+  }
+
+  const readStatusOnce = () =>
     guard(async () => {
       if (!info.value) return
       status.value = await window.gitspynx.readStatus(info.value.path)
@@ -135,6 +152,9 @@ export const useRepo = defineStore('repo', () => {
       await window.gitspynx.unstage(info.value!.path, paths)
       await refreshStatus()
     })
+
+  // A staged rename is a deletion plus an addition; unstage both or the deletion stays staged.
+  const unstageFiles = (files: FileStatus[]) => unstage(files.flatMap((f) => (f.oldPath ? [f.path, f.oldPath] : [f.path])))
 
   async function commit(message: string, amend: boolean): Promise<boolean> {
     error.value = null
@@ -207,10 +227,10 @@ export const useRepo = defineStore('repo', () => {
       if ((await window.gitspynx.push(r, false)) === 'ok') return
       const force = await window.gitspynx.confirm(
         'Push abgelehnt: Der Remote enthält Commits, die lokal fehlen.',
-        'Mit --force-with-lease überschreiben? Das gelingt nur, wenn seit dem letzten Fetch niemand weiter gepusht hat.',
+        'Mit --force-with-lease --force-if-includes überschreiben? Das gelingt nur, wenn alle Remote-Commits bereits in deinem Branch enthalten waren – fremde Commits werden nie überschrieben.',
         'Force-Push'
       )
-      if (force && (await window.gitspynx.push(r, true)) === 'rejected') throw new Error('Force-Push abgelehnt: Remote hat sich seit dem letzten Fetch geändert.')
+      if (force && (await window.gitspynx.push(r, true)) === 'rejected') throw new Error('Force-Push abgelehnt: Der Remote enthält Commits, die nicht in deinem Branch sind. Erst pullen.')
     })
 
   async function deleteRemoteBranch(name: string) {
@@ -228,7 +248,7 @@ export const useRepo = defineStore('repo', () => {
   }
 
   return {
-    info, commits, complete, loading, error, selected, detail, status, staged, unstaged, diffTarget, diff,
+    info, commits, complete, loading, error, selected, detail, status, staged, unstaged, diffTarget, diff, unstageFiles,
     graph, refsBySha, open, refresh, loadMore, select, refreshStatus, openDiff, closeDiff, stage, unstage, commit, close,
     checkoutBranch, createBranch, renameBranch, deleteBranch, busy, fetchAll, pullBranch, pushBranch, deleteRemoteBranch
   }

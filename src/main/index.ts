@@ -1,5 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu } from 'electron'
-import { type FSWatcher, watch } from 'node:fs'
+import type { FSWatcher } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { DiffTarget, GitspynxApi, MenuItem, RepoChange } from '../shared/types'
@@ -23,6 +23,7 @@ import {
   stage,
   unstage
 } from './git'
+import { watchRepo } from './watch'
 
 const recentFile = () => join(app.getPath('userData'), 'recent.json')
 const picked = new Set<string>() // folders the user chose in the dialog this session
@@ -53,7 +54,7 @@ function int(v: unknown, max: number): number {
 }
 
 function paths(v: unknown): string[] {
-  if (!Array.isArray(v) || v.length === 0 || v.length > 10000) throw new GitError('invalid argument')
+  if (!Array.isArray(v) || v.length === 0 || v.length > 1_000_000) throw new GitError('invalid argument')
   return v.map(str)
 }
 
@@ -85,24 +86,17 @@ function popupMenu(sender: Electron.WebContents, items: MenuItem[]): Promise<str
   })
 }
 
-// One watched repository at a time; changes are debounced and pushed to the window.
+// One watched repository at a time, kept across refreshes of the same repo.
 // ponytail: single repo watcher, one per tab once tabs exist (M8)
-let watcher: FSWatcher | null = null
-function watchRepo(path: string, win: Electron.WebContents) {
-  watcher?.close()
-  let timer: NodeJS.Timeout | undefined
-  let git = false
-  watcher = watch(path, { recursive: true }, (_event, file) => {
-    const f = String(file ?? '')
-    if (f.startsWith('.git/objects/') || f.endsWith('.lock')) return
-    git ||= f === '.git' || f.startsWith('.git/')
-    clearTimeout(timer)
-    timer = setTimeout(() => {
-      if (!win.isDestroyed()) win.send('repo:changed', { repo: path, git } satisfies RepoChange)
-      git = false
-    }, 300)
+let watched: { path: string; watcher: FSWatcher } | null = null
+function watchOpenRepo(path: string, win: Electron.WebContents) {
+  if (watched?.path === path) return
+  watched?.watcher.close()
+  const watcher = watchRepo(path, (kind) => {
+    if (!win.isDestroyed()) win.send('repo:changed', { repo: path, kind } satisfies RepoChange)
   })
-  watcher.on('error', () => watcher?.close())
+  watcher.on('error', () => watcher.close())
+  watched = { path, watcher }
 }
 
 function knownRepo(v: unknown): string {
@@ -132,7 +126,7 @@ const handlers: Handlers = {
     const info = await openRepo(await allowedPath(path))
     opened.set(info.path, info.tips)
     await remember(info.path)
-    watchRepo(info.path, sender)
+    watchOpenRepo(info.path, sender)
     return info
   },
   readLog: (_s, repo, skip, limit) => {

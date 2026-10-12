@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import {
   assertRevision,
@@ -196,6 +196,29 @@ describe('working directory', () => {
     expect((await readStatus(wd)).find((f) => f.path === '--force')?.staged).toBe('A')
   })
 
+  it('lets hooks use glob pathspecs', async () => {
+    writeFileSync(join(wd, 'code.ts'), 'x')
+    const out = join(wd, '..', `${basename(wd)}-hook.txt`)
+    writeFileSync(join(wd, '.git', 'hooks', 'pre-commit'), `#!/bin/sh\ngit diff --cached --name-only -- '*.ts' > '${out}'\n`, { mode: 0o755 })
+    await stage(wd, ['code.ts'])
+    await commit(wd, 'with hook', false)
+    rmSync(join(wd, '.git', 'hooks', 'pre-commit'))
+    expect(readFileSync(out, 'utf8').trim()).toBe('code.ts')
+    rmSync(out)
+  })
+
+  it('stages and unstages more paths than fit on a command line', async () => {
+    const many = join(wd, 'many')
+    mkdirSync(many)
+    const names = Array.from({ length: 12000 }, (_, i) => `many/${'x'.repeat(90)}${i}`)
+    for (const n of names) writeFileSync(join(wd, n), '')
+    await stage(wd, names)
+    expect((await readStatus(wd)).filter((f) => f.staged === 'A' && f.path.startsWith('many/'))).toHaveLength(12000)
+    await unstage(wd, names)
+    expect((await readStatus(wd)).filter((f) => f.staged && f.path.startsWith('many/'))).toHaveLength(0)
+    rmSync(many, { recursive: true })
+  })
+
   it('refuses to commit with an empty message', async () => {
     await expect(commit(wd, '   \n', false)).rejects.toBeInstanceOf(GitError)
   })
@@ -296,11 +319,7 @@ describe('remotes', () => {
     expect(at(remote, 'log', '-1', '--format=%s', 'topic')).toBe('topic work')
   })
 
-  it('reports a rejected push and allows a forced push with lease', async () => {
-    at(b, 'fetch', '-q')
-    at(b, 'switch', '-q', 'topic')
-    at(b, 'commit', '-q', '--allow-empty', '-m', 'b on topic')
-    at(b, 'push', '-q')
+  it('reports a rejected push and force-pushes an amended own commit', async () => {
     at(a, 'commit', '--amend', '-q', '--allow-empty', '-m', 'topic work rewritten')
     await fetchAll(a)
     const err = await push(a, false).catch((e) => e)
@@ -311,6 +330,7 @@ describe('remotes', () => {
   })
 
   it('refuses ff-only pull when histories diverged', async () => {
+    at(b, 'fetch', '-q')
     at(b, 'switch', '-q', 'main')
     at(b, 'commit', '-q', '--allow-empty', '-m', 'b main again')
     at(b, 'push', '-q', 'origin', 'main')
@@ -319,6 +339,32 @@ describe('remotes', () => {
     await expect(pull(a, 'ff-only')).rejects.toBeInstanceOf(GitError)
     await pull(a, 'rebase')
     expect(at(a, 'log', '-2', '--format=%s').split('\n')).toEqual(['a main local', 'b main again'])
+  })
+
+  it('never pushes a branch onto a differently named upstream', async () => {
+    at(a, 'fetch', '-q')
+    at(a, 'switch', '-q', '-c', 'my-fix', '--track', 'origin/main')
+    at(a, 'commit', '-q', '--allow-empty', '-m', 'fix meant for review')
+    const before = at(remote, 'rev-parse', 'main')
+    const err = await push(a, false).catch((e) => e)
+    expect(err).toBeInstanceOf(GitError)
+    expect(isRejectedPush(err)).toBe(false) // no force offer
+    expect(at(remote, 'rev-parse', 'main')).toBe(before)
+    at(a, 'switch', '-q', 'main')
+  })
+
+  it('refuses a forced push that would drop commits seen only through fetch', async () => {
+    at(a, 'switch', '-q', 'main')
+    at(a, 'pull', '-q', '--rebase')
+    at(a, 'push', '-q')
+    at(b, 'pull', '-q', '--rebase')
+    at(b, 'commit', '-q', '--allow-empty', '-m', 'colleague work')
+    at(b, 'push', '-q')
+    at(a, 'commit', '-q', '--allow-empty', '-m', 'mine, diverged')
+    await fetchAll(a) // remote-tracking ref now includes the colleague commit
+    expect(isRejectedPush(await push(a, false).catch((e) => e))).toBe(true)
+    await expect(push(a, true)).rejects.toBeInstanceOf(GitError)
+    expect(at(remote, 'log', '-1', '--format=%s', 'main')).toBe('colleague work')
   })
 
   it('deletes a branch on the remote', async () => {

@@ -24,8 +24,8 @@ export function run(args: string[], cwd: string, okCodes = [0], stdin?: string, 
         cwd,
         maxBuffer: 256 * 1024 * 1024,
         timeout,
-        // literal pathspecs: renderer-supplied paths never act as globs or :(magic)
-        env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_LITERAL_PATHSPECS: '1', LC_ALL: 'C' }
+        // English messages for the few checks that match git output; hooks inherit only this
+        env: { ...process.env, GIT_TERMINAL_PROMPT: '0', LC_MESSAGES: 'C' }
       },
       (err, stdout, stderr) => {
         const code = err ? (typeof err.code === 'number' ? err.code : -1) : 0
@@ -101,14 +101,19 @@ export async function readStatus(repo: string): Promise<FileStatus[]> {
   return parseStatus(stdout)
 }
 
+// Renderer-supplied paths: literal (no globs or :(magic)) and passed on stdin (no argv size limit).
+// Only for commands that run no hooks, so hooks never inherit GIT_LITERAL_PATHSPECS.
+const LITERAL = '--literal-pathspecs'
+const FROM_STDIN = ['--pathspec-from-file=-', '--pathspec-file-nul']
+
 export async function stage(repo: string, paths: string[]): Promise<void> {
-  await run(['add', '-A', '--', ...paths], repo)
+  await run([LITERAL, 'add', '-A', ...FROM_STDIN], repo, [0], paths.join('\0'))
 }
 
 export async function unstage(repo: string, paths: string[]): Promise<void> {
   const head = await run(['rev-parse', '-q', '--verify', 'HEAD'], repo, [0, 1])
-  if (head.code === 1) await run(['rm', '--cached', '-r', '-q', '--', ...paths], repo) // no commit yet
-  else await run(['restore', '--staged', '--', ...paths], repo)
+  const args = head.code === 1 ? ['rm', '--cached', '-r', '-q'] : ['restore', '--staged'] // rm: no commit yet
+  await run([LITERAL, ...args, ...FROM_STDIN], repo, [0], paths.join('\0'))
 }
 
 const DIFF_OPTS = ['--no-color', '--no-ext-diff']
@@ -117,12 +122,12 @@ export async function readFileDiff(repo: string, target: DiffTarget): Promise<Fi
   const { path } = target
   if ('sha' in target) {
     assertRevision(target.sha)
-    const args = ['diff-tree', '-p', '--root', '-m', '--first-parent', '--no-commit-id', ...DIFF_OPTS, target.sha, '--', path]
+    const args = [LITERAL, 'diff-tree', '-p', '--root', '-m', '--first-parent', '--no-commit-id', ...DIFF_OPTS, target.sha, '--', path]
     return parseDiff((await run(args, repo)).stdout)
   }
-  if (target.staged) return parseDiff((await run(['diff', '--cached', ...DIFF_OPTS, '--', path], repo)).stdout)
-  const tracked = (await run(['ls-files', '--', path], repo)).stdout !== ''
-  if (tracked) return parseDiff((await run(['diff', ...DIFF_OPTS, '--', path], repo)).stdout)
+  if (target.staged) return parseDiff((await run([LITERAL, 'diff', '--cached', ...DIFF_OPTS, '--', path], repo)).stdout)
+  const tracked = (await run([LITERAL, 'ls-files', '--', path], repo)).stdout !== ''
+  if (tracked) return parseDiff((await run([LITERAL, 'diff', ...DIFF_OPTS, '--', path], repo)).stdout)
   return parseDiff((await run(['diff', '--no-index', ...DIFF_OPTS, '--', '/dev/null', path], repo, [0, 1])).stdout)
 }
 
@@ -183,21 +188,22 @@ async function config(repo: string, key: string): Promise<string> {
   return (await run(['config', '--get', key], repo, [0, 1])).stdout.trim()
 }
 
-// Pushes the current branch to its upstream, or to origin (else the first remote) with -u.
+// With an upstream, plain `git push` so git applies push.default, pushRemote and its
+// name-mismatch protection. Without one, publish under the same name with -u.
+// Force uses --force-if-includes so commits only seen via fetch are never overwritten.
 export async function push(repo: string, force: boolean): Promise<void> {
   const branch = (await run(['symbolic-ref', '-q', '--short', 'HEAD'], repo, [0, 1])).stdout.trim()
   if (!branch) throw new GitError('cannot push a detached HEAD')
-  const lease = force ? ['--force-with-lease'] : []
-  const remote = await config(repo, `branch.${branch}.remote`)
-  const merge = await config(repo, `branch.${branch}.merge`)
-  if (remote && merge) {
-    await run(['push', ...lease, remote, `refs/heads/${branch}:${merge}`], repo, [0], undefined, NETWORK_TIMEOUT)
+  const lease = force ? ['--force-with-lease', '--force-if-includes'] : []
+  const upstream = await run(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'], repo, [0, 128])
+  if (upstream.code === 0) {
+    await run(['push', ...lease], repo, [0], undefined, NETWORK_TIMEOUT)
     return
   }
   const all = await remotes(repo)
   if (!all.length) throw new GitError('no remote configured')
-  const target = all.includes('origin') ? 'origin' : all[0]
-  await run(['push', '-u', ...lease, target, `refs/heads/${branch}:refs/heads/${branch}`], repo, [0], undefined, NETWORK_TIMEOUT)
+  const target = (await config(repo, 'remote.pushDefault')) || (all.includes('origin') ? 'origin' : all[0])
+  await run(['push', '-u', ...lease, target, 'HEAD'], repo, [0], undefined, NETWORK_TIMEOUT)
 }
 
 export function isRejectedPush(e: unknown): boolean {

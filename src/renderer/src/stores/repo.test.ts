@@ -185,4 +185,41 @@ describe('repo store', () => {
       expect(repo.error).toBeNull()
     })
   })
+
+  it('coalesces status refreshes that arrive while one is running', async () => {
+    const repo = useRepo()
+    const first = repo.open('/r')
+    await flush()
+    logCalls[0].d.resolve(page('c', 3))
+    await first
+    const w = (globalThis as unknown as { window: { gitspynx: Record<string, unknown> } }).window
+    const pending: ReturnType<typeof deferred<never[]>>[] = []
+    w.gitspynx.readStatus = () => {
+      const d = deferred<never[]>()
+      pending.push(d)
+      return d.promise
+    }
+    const runs = [repo.refreshStatus(), repo.refreshStatus(), repo.refreshStatus()]
+    await flush()
+    expect(pending).toHaveLength(1)
+    pending[0].resolve([])
+    await flush()
+    expect(pending).toHaveLength(2) // one follow-up for all calls that came in meanwhile
+    pending[1].resolve([])
+    await Promise.all(runs)
+    expect(pending).toHaveLength(2)
+  })
+
+  it('unstages both sides of a staged rename', async () => {
+    const repo = useRepo()
+    const first = repo.open('/r')
+    await flush()
+    logCalls[0].d.resolve(page('c', 3))
+    await first
+    const w = (globalThis as unknown as { window: { gitspynx: Record<string, unknown> } }).window
+    let unstaged: string[] = []
+    w.gitspynx.unstage = async (_r: string, paths: string[]) => void (unstaged = paths)
+    await repo.unstageFiles([{ path: 'new.ts', oldPath: 'old.ts', staged: 'R', unstaged: null, conflicted: false }])
+    expect(unstaged.sort()).toEqual(['new.ts', 'old.ts'])
+  })
 })
