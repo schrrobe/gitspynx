@@ -1,0 +1,125 @@
+import { createPinia, setActivePinia } from 'pinia'
+import { beforeEach, describe, expect, it } from 'vitest'
+import type { RepoInfo, Session } from '../../../shared/types'
+import { useRepo } from './repo'
+import { useTabs } from './tabs'
+
+let saved: { tabs: string[]; active: number }[]
+let session: Session
+let opens: string[]
+let logTips: (string[] | undefined)[]
+
+const infoFor = (path: string): RepoInfo => ({
+  path,
+  head: { branch: 'main', sha: `${path}-head` },
+  refs: [{ name: 'topic', fullName: 'refs/heads/topic', kind: 'local', target: `${path}-topic` }],
+  tips: [`${path}-head`, `${path}-topic`],
+  operation: null,
+  stashes: []
+})
+
+beforeEach(() => {
+  setActivePinia(createPinia())
+  saved = []
+  opens = []
+  logTips = []
+  session = { tabs: [], active: 0, workspaces: [] }
+  ;(globalThis as unknown as { window: unknown }).window = {
+    gitspynx: {
+      openRepo: async (p: string) => {
+        if (p.startsWith('/bad')) throw new Error('not a git repository')
+        opens.push(p)
+        return infoFor(p)
+      },
+      closeRepo: async () => {},
+      readLog: async (_r: string, _s: number, _l: number, tips?: string[]) => (logTips.push(tips), []),
+      readStatus: async () => [],
+      readCommit: async (_r: string, sha: string) => ({ sha }),
+      getSession: async () => session,
+      // structuredClone like Electron IPC: reactive proxies would fail here
+      saveTabs: async (tabs: string[], active: number) => void saved.push(structuredClone({ tabs, active })),
+      saveWorkspace: async (name: string, repos: string[]) => ({ ...session, workspaces: [{ name, repos: structuredClone(repos) }] }),
+      deleteWorkspace: async () => ({ ...session, workspaces: [] })
+    }
+  }
+})
+
+describe('tabs', () => {
+  it('opens repositories as tabs without duplicates and persists them', async () => {
+    const tabs = useTabs()
+    await tabs.openPath('/a')
+    await tabs.openPath('/b')
+    await tabs.openPath('/a')
+    expect(tabs.tabs).toEqual(['/a', '/b'])
+    expect(tabs.active).toBe(0)
+    expect(saved.at(-1)).toEqual({ tabs: ['/a', '/b'], active: 0 })
+  })
+
+  it('does not add a tab when opening fails', async () => {
+    const tabs = useTabs()
+    await tabs.openPath('/a')
+    await tabs.openPath('/bad')
+    expect(tabs.tabs).toEqual(['/a'])
+    expect(useRepo().info?.path).toBe('/a')
+  })
+
+  it('remembers selection and filters per tab', async () => {
+    const tabs = useTabs()
+    const repo = useRepo()
+    await tabs.openPath('/a')
+    await repo.toggleSolo('refs/heads/topic')
+    await repo.select('x1')
+    await tabs.openPath('/b')
+    expect(repo.solo).toBeNull()
+    await tabs.activate(0)
+    expect(repo.solo).toBe('refs/heads/topic')
+    expect(logTips.at(-1)).toEqual(['/a-topic'])
+    expect(repo.selected).toBe('x1')
+  })
+
+  it('closing the active tab activates its neighbour, closing the last one closes the repo', async () => {
+    const tabs = useTabs()
+    await tabs.openPath('/a')
+    await tabs.openPath('/b')
+    await tabs.closeTab(1)
+    expect(tabs.tabs).toEqual(['/a'])
+    expect(useRepo().info?.path).toBe('/a')
+    await tabs.closeTab(0)
+    expect(tabs.tabs).toEqual([])
+    expect(useRepo().info).toBeNull()
+  })
+
+  it('restores the stored session on start', async () => {
+    session = { tabs: ['/a', '/b'], active: 1, workspaces: [] }
+    const tabs = useTabs()
+    await tabs.restore()
+    expect(tabs.tabs).toEqual(['/a', '/b'])
+    expect(opens).toEqual(['/b']) // only the active tab is loaded
+  })
+
+  it('saves the open tabs as a workspace and opens a workspace as tabs', async () => {
+    const tabs = useTabs()
+    await tabs.openPath('/a')
+    await tabs.openPath('/b')
+    await tabs.saveWorkspace('Team')
+    expect(tabs.workspaces).toEqual([{ name: 'Team', repos: ['/a', '/b'] }])
+    await tabs.closeTab(0)
+    await tabs.closeTab(0)
+    await tabs.openWorkspace({ name: 'Team', repos: ['/a', '/b'] })
+    expect(tabs.tabs).toEqual(['/a', '/b'])
+    expect(useRepo().info?.path).toBe('/a')
+  })
+
+  it('keeps a tab opened while the stored session is still loading', async () => {
+    let release!: (s: Session) => void
+    ;(globalThis as unknown as { window: { gitspynx: Record<string, unknown> } }).window.gitspynx.getSession = () =>
+      new Promise<Session>((r) => (release = r))
+    const tabs = useTabs()
+    const restoring = tabs.restore()
+    await tabs.openPath('/a')
+    release({ tabs: [], active: 0, workspaces: [{ name: 'W', repos: ['/x'] }] })
+    await restoring
+    expect(tabs.tabs).toEqual(['/a'])
+    expect(tabs.workspaces).toEqual([{ name: 'W', repos: ['/x'] }])
+  })
+})

@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu } from 'electron'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { type DiffTarget, type GitspynxApi, MAX_LOG_PAGE, type MenuItem, type RepoChange, type Resolution } from '../shared/types'
+import { type DiffTarget, type GitspynxApi, MAX_LOG_PAGE, type MenuItem, type RepoChange, type Resolution, type Session } from '../shared/types'
 import {
   abortOperation,
   checkout,
@@ -34,9 +34,29 @@ import {
   stashPush,
   unstage
 } from './git'
+import { parseSession, withoutWorkspace, withTabs, withWorkspace } from './session'
 import { type RepoWatcher, watchRepo } from './watch'
 
 const recentFile = () => join(app.getPath('userData'), 'recent.json')
+const sessionFile = () => join(app.getPath('userData'), 'session.json')
+let session: Session | null = null
+
+async function loadSession(): Promise<Session> {
+  if (!session) session = parseSession(await readFile(sessionFile(), 'utf8').then(JSON.parse, () => null))
+  return session
+}
+
+async function storeSession(next: Session) {
+  session = next
+  await writeFile(sessionFile(), JSON.stringify(next, null, 2))
+}
+
+// Paths a session may contain: repos opened this run, or already stored in the session.
+async function knownToSession(): Promise<(path: string) => boolean> {
+  const s = await loadSession()
+  const stored = new Set([...s.tabs, ...s.workspaces.flatMap((w) => w.repos)])
+  return (p) => opened.has(p) || stored.has(p)
+}
 const picked = new Set<string>() // folders the user chose in the dialog this session
 const opened = new Map<string, string[]>() // opened repo -> log tips; only these may be queried
 
@@ -133,7 +153,7 @@ function knownRepo(v: unknown): string {
 // The renderer may only open what the user picked or opened before (recent list).
 async function allowedPath(v: unknown): Promise<string> {
   const path = str(v)
-  if (picked.has(path) || opened.has(path) || (await loadRecent()).includes(path)) return path
+  if (picked.has(path) || opened.has(path) || (await loadRecent()).includes(path) || (await knownToSession())(path)) return path
   throw new GitError('choose the repository with the open dialog first')
 }
 
@@ -149,6 +169,20 @@ const handlers: Handlers = {
   recentRepos: () => loadRecent(),
   async closeRepo() {
     unwatch()
+  },
+  getSession: () => loadSession(),
+  async saveTabs(_s, tabs, active) {
+    if (!Array.isArray(tabs)) throw new GitError('invalid argument')
+    await storeSession(withTabs(await loadSession(), tabs.map(str), int(active, 1000), await knownToSession()))
+  },
+  async saveWorkspace(_s, name, repos) {
+    if (!Array.isArray(repos)) throw new GitError('invalid argument')
+    await storeSession(withWorkspace(await loadSession(), str(name), repos.map(str), await knownToSession()))
+    return session!
+  },
+  async deleteWorkspace(_s, name) {
+    await storeSession(withoutWorkspace(await loadSession(), str(name)))
+    return session!
   },
   async openRepo(sender, path) {
     const info = await openRepo(await allowedPath(path))

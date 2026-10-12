@@ -5,6 +5,12 @@ import { layoutGraph } from '../graph/layout'
 import { ask } from '../prompt'
 
 const PAGE = 2000
+
+export interface View {
+  selected: string | null
+  hidden: string[]
+  solo: string | null
+}
 export const WIP = 'WIP' // pseudo selection for the working directory
 
 export const useRepo = defineStore('repo', () => {
@@ -61,16 +67,20 @@ export const useRepo = defineStore('repo', () => {
     return repo.tips.filter((t) => visible.has(t))
   }
 
-  // Reads repo state and the first pages again; keepCount keeps at least that many commits loaded.
-  const open = (path: string, keepCount = 0) =>
+  // What a tab remembers when it is left: selection and branch filters.
+  const viewState = (): View => ({ selected: selected.value, hidden: [...hidden.value], solo: solo.value })
+
+  // Reads repo state and the first pages again; keepCount keeps at least that many commits loaded;
+  // view restores a tab's remembered selection and filters.
+  const open = (path: string, keepCount = 0, view?: View) =>
     guard(async () => {
       const gen = ++generation
       loading.value = true
       try {
         const next = await window.gitspynx.openRepo(path)
         if (next.path !== info.value?.path) {
-          hidden.value = new Set() // filters belong to the repository they were set in
-          solo.value = null
+          hidden.value = new Set(view?.hidden) // filters belong to the repository they were set in
+          solo.value = view?.solo ?? null
         }
         const limit = Math.min(Math.max(PAGE, keepCount), MAX_LOG_PAGE)
         const [first, files] = await Promise.all([
@@ -88,6 +98,8 @@ export const useRepo = defineStore('repo', () => {
           detail.value = null
           diffTarget.value = null
           diff.value = null
+          conflict.value = null
+          if (view?.selected) void select(view.selected)
         }
       } finally {
         if (gen === generation) loading.value = false
@@ -391,7 +403,7 @@ export const useRepo = defineStore('repo', () => {
   }
 
   return {
-    info, commits, complete, loading, error, notice, selected, detail, status, staged, unstaged, diffTarget, diff, unstageFiles,
+    info, commits, complete, loading, error, notice, viewState, selected, detail, status, staged, unstaged, diffTarget, diff, unstageFiles,
     graph, refsBySha, open, refresh, loadMore, select, refreshStatus, openDiff, closeDiff, stage, unstage, commit, close,
     checkoutBranch, createBranch, renameBranch, deleteBranch, busy, fetchAll, pullBranch, pushBranch, deleteRemoteBranch,
     conflict, mergeInto, rebaseOnto, cherryPick, continueOp, skipOp, abortOp, openConflict, resolve,

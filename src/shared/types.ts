@@ -60,6 +60,10 @@ export interface GitspynxApi {
   recentRepos(): Promise<string[]>
   openRepo(path: string): Promise<RepoInfo>
   closeRepo(): Promise<void>
+  getSession(): Promise<Session>
+  saveTabs(tabs: string[], active: number): Promise<void>
+  saveWorkspace(name: string, repos: string[]): Promise<Session>
+  deleteWorkspace(name: string): Promise<Session>
   // pages over RepoInfo.tips, or over a subset of them (branch filters)
   readLog(repo: string, skip: number, limit: number, tips?: string[]): Promise<Commit[]>
   readCommit(repo: string, sha: string): Promise<CommitDetail>
@@ -122,3 +126,14 @@ export interface FileDiff {
 }
 
 export type DiffTarget = { path: string; staged: boolean } | { path: string; sha: string }
+
+export interface Workspace {
+  name: string
+  repos: string[] // work tree paths
+}
+
+export interface Session {
+  tabs: string[] // open repositories (work tree paths), in tab order
+  active: number
+  workspaces: Workspace[]
+}

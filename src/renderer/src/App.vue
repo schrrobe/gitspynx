@@ -7,14 +7,20 @@ import DiffView from './components/DiffView.vue'
 import OperationBar from './components/OperationBar.vue'
 import Sidebar from './components/Sidebar.vue'
 import PromptDialog from './components/PromptDialog.vue'
+import TabStrip from './components/TabStrip.vue'
 import WorkdirPanel from './components/WorkdirPanel.vue'
 import { ask } from './prompt'
 import { useRepo, WIP } from './stores/repo'
+import { useTabs } from './stores/tabs'
 
 const repo = useRepo()
+const tabs = useTabs()
 const recent = ref<string[]>([])
 
-onMounted(async () => (recent.value = await window.gitspynx.recentRepos()))
+onMounted(async () => {
+  recent.value = await window.gitspynx.recentRepos()
+  await tabs.restore()
+})
 
 // File changes on disk: refs/HEAD changes reload history, work tree/index changes only the status.
 const stopWatching = window.gitspynx.onRepoChanged(({ repo: path, kind }) => {
@@ -41,13 +47,18 @@ async function stashWithMessage() {
 }
 
 async function closeRepo() {
-  repo.close()
+  await tabs.closeTab(tabs.active)
   recent.value = await window.gitspynx.recentRepos()
 }
 
 async function pick() {
   const path = await window.gitspynx.pickRepo()
-  if (path) await repo.open(path)
+  if (path) await tabs.openPath(path)
+}
+
+async function deleteWorkspace(name: string) {
+  if (await window.gitspynx.confirm(`Workspace „${name}“ löschen?`, 'Die Repositories selbst bleiben unverändert.', 'Workspace löschen'))
+    await tabs.deleteWorkspace(name)
 }
 </script>
 
@@ -56,17 +67,28 @@ async function pick() {
     <h1>gitspynx</h1>
     <button :disabled="repo.loading" @click="pick">Repository öffnen…</button>
     <p v-if="repo.error" class="error" role="alert">{{ repo.error }}</p>
+    <section v-if="tabs.workspaces.length">
+      <h2 class="dim">Workspaces</h2>
+      <ul>
+        <li v-for="ws in tabs.workspaces" :key="ws.name" class="ws">
+          <a href="#" :title="ws.repos.join('\n')" @click.prevent="tabs.openWorkspace(ws)">{{ ws.name }}</a>
+          <span class="dim">{{ ws.repos.length }} Repositories</span>
+          <button class="del" :aria-label="`Workspace ${ws.name} löschen`" @click="deleteWorkspace(ws.name)">×</button>
+        </li>
+      </ul>
+    </section>
     <section v-if="recent.length">
       <h2 class="dim">Zuletzt geöffnet</h2>
       <ul>
         <li v-for="p in recent" :key="p">
-          <a href="#" @click.prevent="repo.open(p)">{{ p }}</a>
+          <a href="#" @click.prevent="tabs.openPath(p)">{{ p }}</a>
         </li>
       </ul>
     </section>
   </div>
 
   <div v-else class="shell">
+    <TabStrip @add="pick" />
     <header class="toolbar">
       <strong>{{ repo.info.path.split('/').pop() }}</strong>
       <span class="dim">{{ repo.info.head.branch ?? 'detached HEAD' }}</span>
@@ -108,11 +130,14 @@ async function pick() {
 .welcome ul { list-style: none; padding: 0; }
 .welcome li { padding: 4px 0; }
 .welcome a { color: var(--accent); text-decoration: none; word-break: break-all; }
+.welcome .ws { display: flex; align-items: center; gap: 10px; }
+.welcome .del { border: 0; background: none; padding: 0 6px; color: var(--text-dim); }
+.welcome .del:hover { color: var(--danger); }
 .error { color: var(--danger); }
 .notice { color: var(--lane-1); }
 .shell {
   display: grid;
-  grid-template: 'bar bar bar' 44px 'op op op' auto 'side list detail' 1fr / 220px 1fr 340px;
+  grid-template: 'tabs tabs tabs' auto 'bar bar bar' 44px 'op op op' auto 'side list detail' 1fr / 220px 1fr 340px;
   height: 100%;
 }
 .toolbar {
