@@ -78,6 +78,7 @@ export interface GitspynxApi {
   stageHunk(repo: string, selection: HunkSelection): Promise<void>
   readRebasePlan(repo: string, base: string): Promise<RebaseCommit[]>
   interactiveRebase(repo: string, base: string, steps: RebaseStep[]): Promise<'ok' | 'conflicts'>
+  applyUndo(repo: string, steps: UndoStep[]): Promise<void>
   commit(repo: string, message: string, amend: boolean): Promise<void>
   createBranch(repo: string, name: string, start: string, switchTo: boolean): Promise<void>
   checkout(repo: string, branch: string): Promise<void>
@@ -171,3 +172,11 @@ export interface RebaseStep {
   action: RebaseAction
   message?: string // new message for reword
 }
+
+// One step of an undo or redo; main checks the expected state before each step.
+export type UndoStep =
+  | { type: 'reset'; expect: string; to: string; mode: 'soft' | 'keep' }
+  | { type: 'checkout'; branch: string }
+  | { type: 'createBranch'; name: string; sha: string }
+  | { type: 'deleteBranch'; name: string; expect: string }
+  | { type: 'renameBranch'; from: string; to: string }

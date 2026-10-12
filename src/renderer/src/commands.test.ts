@@ -24,6 +24,13 @@ describe('commandForKey', () => {
     expect(commandForKey('Mod+F', { repeat: false, inTextField: false }, commands, byCombo)).toBeUndefined()
   })
 
+  it('leaves commands marked notInTextFields to the text field (Mod+Z is text undo there)', () => {
+    const cmds = [cmd('undo', { notInTextFields: true })]
+    const map = new Map([['Mod+Z', 'undo']])
+    expect(commandForKey('Mod+Z', { repeat: false, inTextField: true }, cmds, map)).toBeUndefined()
+    expect(commandForKey('Mod+Z', { repeat: false, inTextField: false }, cmds, map)?.id).toBe('undo')
+  })
+
   it('leaves plain keys to text fields', () => {
     expect(commandForKey('G', { repeat: false, inTextField: true }, commands, byCombo)).toBeUndefined()
     expect(commandForKey('G', { repeat: false, inTextField: false }, commands, byCombo)?.id).toBe('plain')

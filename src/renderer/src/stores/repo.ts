@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref, shallowRef } from 'vue'
-import { type Commit, type CommitDetail, type ConflictVersions, type DiffTarget, type FileDiff, type FileStatus, type HunkSelection, MAX_LOG_PAGE, type RebaseCommit, type RebaseStep, type RepoInfo, type Resolution } from '../../../shared/types'
+import { type Commit, type CommitDetail, type ConflictVersions, type DiffTarget, type FileDiff, type FileStatus, type HunkSelection, MAX_LOG_PAGE, type RebaseCommit, type RebaseStep, type UndoStep, type RepoInfo, type Resolution } from '../../../shared/types'
 import { layoutGraph } from '../graph/layout'
 import { ask } from '../prompt'
 
@@ -29,6 +29,17 @@ export const useRepo = defineStore('repo', () => {
   const busyByPath = shallowRef(new Map<string, NetworkKind>()) // running network operation per repo
   const busy = computed(() => (info.value && busyByPath.value.get(info.value.path)) || null)
   const conflict = shallowRef<{ path: string; versions: ConflictVersions } | null>(null)
+  // Undo/redo per repository (memory only). Each entry holds the steps that reverse the action and
+  // the steps that repeat it; main checks the expected state before every step.
+  interface HistoryEntry {
+    label: string
+    undo: UndoStep[]
+    redo: UndoStep[]
+  }
+  const histories = shallowRef(new Map<string, { undo: HistoryEntry[]; redo: HistoryEntry[] }>())
+  const history = computed(() => (info.value && histories.value.get(info.value.path)) || { undo: [], redo: [] })
+  const undoLabel = computed(() => history.value.undo.at(-1)?.label ?? null)
+  const redoLabel = computed(() => history.value.redo.at(-1)?.label ?? null)
   const rebasePlan = shallowRef<{ base: string; commits: RebaseCommit[] } | null>(null) // open interactive-rebase dialog
   const hidden = shallowRef(new Set<string>()) // fullNames of refs whose history is hidden
   const solo = ref<string | null>(null) // fullName of the only ref shown
@@ -213,7 +224,7 @@ export const useRepo = defineStore('repo', () => {
     const plan = rebasePlan.value
     if (!plan) return
     rebasePlan.value = null
-    await integrate((r) => window.gitspynx.interactiveRebase(r, plan.base, steps))
+    await integrate((r) => window.gitspynx.interactiveRebase(r, plan.base, steps), 'Interaktiver Rebase')
   }
 
   const stageHunk = (sel: Omit<HunkSelection, 'path' | 'staged'>) =>
@@ -227,51 +238,112 @@ export const useRepo = defineStore('repo', () => {
   // A staged rename is a deletion plus an addition; unstage both or the deletion stays staged.
   const unstageFiles = (files: FileStatus[]) => unstage(files.flatMap((f) => (f.oldPath ? [f.path, f.oldPath] : [f.path])))
 
+  function record(path: string, entry: HistoryEntry) {
+    const h = histories.value.get(path) ?? { undo: [], redo: [] }
+    histories.value = new Map(histories.value).set(path, { undo: [...h.undo, entry].slice(-50), redo: [] })
+  }
+
+  // Runs an action and records it when HEAD moved (commit, merge, rebase, pull …).
+  async function recordHeadMove(label: string, mode: 'soft' | 'keep', action: () => Promise<boolean>) {
+    const path = info.value?.path
+    const before = info.value?.head.sha
+    const ok = await action()
+    const after = info.value?.head.sha
+    if (ok && path && info.value?.path === path && before && after && before !== after)
+      record(path, { label, undo: [{ type: 'reset', expect: after, to: before, mode }], redo: [{ type: 'reset', expect: before, to: after, mode }] })
+    return ok
+  }
+
+  async function step(direction: 'undo' | 'redo') {
+    if (!info.value || busy.value) return
+    const path = info.value.path
+    const h = histories.value.get(path)
+    const entry = h?.[direction].at(-1)
+    if (!h || !entry) return
+    const rest = { ...h, [direction]: h[direction].slice(0, -1) }
+    histories.value = new Map(histories.value).set(path, rest) // a refused step is forgotten
+    const ok = await mutate((r) => window.gitspynx.applyUndo(r, entry[direction]))
+    if (!ok) return
+    const other = direction === 'undo' ? 'redo' : 'undo'
+    histories.value = new Map(histories.value).set(path, { ...rest, [other]: [...rest[other], entry] })
+  }
+  const undo = () => step('undo')
+  const redo = () => step('redo')
+
   async function commit(message: string, amend: boolean): Promise<boolean> {
     if (busy.value) return false
-    error.value = null
-    try {
-      await window.gitspynx.commit(info.value!.path, message, amend)
-      closeDiff()
-      await refresh()
-      return true
-    } catch (e) {
-      report(e)
-      return false
-    }
+    const label = amend ? 'Amend' : `Commit „${message.split('\n')[0]}“`
+    return recordHeadMove(label, 'soft', async () => {
+      error.value = null
+      try {
+        await window.gitspynx.commit(info.value!.path, message, amend)
+        closeDiff()
+        await refresh()
+        return true
+      } catch (e) {
+        report(e)
+        return false
+      }
+    })
   }
 
   // Runs a ref-changing operation, then reloads history. Refused while a network operation runs
   // (a checkout in the middle of a pull would interleave with it). Errors and the reload only
-  // apply if the user is still looking at that repository (tabs).
-  async function mutate(op: (repo: string) => Promise<void>, partOfNetworkOp = false) {
-    if (!info.value || (busy.value && !partOfNetworkOp)) return
+  // apply if the user is still looking at that repository (tabs). Resolves true on success.
+  async function mutate(op: (repo: string) => Promise<void>, partOfNetworkOp = false): Promise<boolean> {
+    if (!info.value || (busy.value && !partOfNetworkOp)) return false
     const path = info.value.path
     error.value = null
     notice.value = null
+    let failure: unknown = null
     try {
       await op(path)
     } catch (e) {
-      if (info.value?.path === path) report(e)
-    } finally {
-      if (info.value?.path === path) await refresh()
+      failure = e ?? new Error('failed')
     }
+    if (info.value?.path !== path) return failure === null
+    await refresh() // reloading clears messages, so report afterwards
+    if (failure !== null && info.value?.path === path) report(failure)
+    return failure === null
   }
 
-  const checkoutBranch = (name: string) => mutate((r) => window.gitspynx.checkout(r, name))
+  async function checkoutBranch(name: string) {
+    const path = info.value?.path
+    const before = info.value?.head.branch
+    if (!(await mutate((r) => window.gitspynx.checkout(r, name)))) return
+    const after = info.value?.head.branch
+    if (path && before && after && before !== after)
+      record(path, { label: `Checkout „${after}“`, undo: [{ type: 'checkout', branch: before }], redo: [{ type: 'checkout', branch: after }] })
+  }
 
   async function createBranch(start: string) {
     const name = await ask('Neuer Branch', '', 'Erstellen und auschecken')
-    if (name) await mutate((r) => window.gitspynx.createBranch(r, name, start, true))
+    if (!name || !info.value) return
+    const path = info.value.path
+    const before = info.value.head.branch
+    if (!(await mutate((r) => window.gitspynx.createBranch(r, name, start, true)))) return
+    const sha = info.value?.head.sha
+    if (before && sha)
+      record(path, {
+        label: `Branch „${name}“ erstellt`,
+        undo: [{ type: 'checkout', branch: before }, { type: 'deleteBranch', name, expect: sha }],
+        redo: [{ type: 'createBranch', name, sha }, { type: 'checkout', branch: name }]
+      })
   }
 
   async function renameBranch(from: string) {
     const to = await ask(`Branch „${from}“ umbenennen`, from, 'Umbenennen')
-    if (to && to !== from) await mutate((r) => window.gitspynx.renameBranch(r, from, to))
+    if (!to || to === from || !info.value) return
+    const path = info.value.path
+    if (await mutate((r) => window.gitspynx.renameBranch(r, from, to)))
+      record(path, { label: `„${from}“ umbenannt`, undo: [{ type: 'renameBranch', from: to, to: from }], redo: [{ type: 'renameBranch', from, to }] })
   }
 
   async function deleteBranch(name: string) {
     if (!(await window.gitspynx.confirm(`Branch „${name}“ löschen?`, '', 'Löschen'))) return
+    const path = info.value?.path
+    const sha = info.value?.refs.find((r) => r.kind === 'local' && r.name === name)?.target
+    let deleted = false
     await mutate(async (r) => {
       try {
         await window.gitspynx.deleteBranch(r, name, false)
@@ -283,8 +355,13 @@ export const useRepo = defineStore('repo', () => {
           'Trotzdem löschen'
         )
         if (force) await window.gitspynx.deleteBranch(r, name, true)
+        deleted = force
+        return
       }
+      deleted = true
     })
+    if (deleted && path && sha)
+      record(path, { label: `Branch „${name}“ gelöscht`, undo: [{ type: 'createBranch', name, sha }], redo: [{ type: 'deleteBranch', name, expect: sha }] })
   }
 
   async function network(kind: NetworkKind, op: (repo: string) => Promise<void>) {
@@ -301,7 +378,15 @@ export const useRepo = defineStore('repo', () => {
   }
 
   const fetchAll = () => network('fetch', (r) => window.gitspynx.fetch(r))
-  const pullBranch = (mode: 'ff-only' | 'rebase' | 'merge' = 'ff-only') => network('pull', (r) => window.gitspynx.pull(r, mode))
+  const pullBranch = (mode: 'ff-only' | 'rebase' | 'merge' = 'ff-only') =>
+    recordHeadMove('Pull', 'keep', async () => {
+      let ok = false
+      await network('pull', async (r) => {
+        await window.gitspynx.pull(r, mode)
+        ok = true
+      })
+      return ok
+    })
 
   const pushBranch = () =>
     network('push', async (r) => {
@@ -320,17 +405,20 @@ export const useRepo = defineStore('repo', () => {
   }
 
   // Merge/rebase/cherry-pick: on conflicts show the working directory where they get resolved.
-  async function integrate(op: (repo: string) => Promise<'ok' | 'conflicts'>): Promise<boolean> {
+  // With a label, a run that completes without conflicts can be undone.
+  async function integrate(op: (repo: string) => Promise<'ok' | 'conflicts'>, label?: string): Promise<boolean> {
     const path = info.value?.path
-    let result = 'ok' as 'ok' | 'conflicts' // assigned inside the callback
-    await mutate(async (r) => void (result = await op(r)))
+    let result = 'failed' as 'ok' | 'conflicts' | 'failed' // assigned inside the callback
+    const run = async () => (await mutate(async (r) => void (result = await op(r)))) && result === 'ok'
+    if (label) await recordHeadMove(label, 'keep', run)
+    else await run()
     if (result !== 'conflicts' || info.value?.path !== path) return false
     await select(WIP)
     return true
   }
 
-  const mergeInto = (rev: string) => integrate((r) => window.gitspynx.merge(r, rev))
-  const cherryPick = (sha: string) => integrate((r) => window.gitspynx.cherryPick(r, sha))
+  const mergeInto = (rev: string) => integrate((r) => window.gitspynx.merge(r, rev), `Merge „${rev.length === 40 ? rev.slice(0, 7) : rev}“`)
+  const cherryPick = (sha: string) => integrate((r) => window.gitspynx.cherryPick(r, sha), `Cherry-Pick ${sha.slice(0, 7)}`)
   const continueOp = () => integrate((r) => window.gitspynx.continueOperation(r))
   const skipOp = () => integrate((r) => window.gitspynx.skipOperation(r))
 
@@ -341,7 +429,7 @@ export const useRepo = defineStore('repo', () => {
       'Die Commits des Branches werden neu geschrieben. Bereits gepushte Commits brauchen danach einen Force-Push.',
       'Rebase'
     )
-    if (ok) await integrate((r) => window.gitspynx.rebase(r, rev))
+    if (ok) await integrate((r) => window.gitspynx.rebase(r, rev), `Rebase auf „${rev.length === 40 ? rev.slice(0, 7) : rev}“`)
   }
 
   const OP_NAMES = { merge: 'Merge', rebase: 'Rebase', 'cherry-pick': 'Cherry-Pick', revert: 'Revert' }
@@ -447,6 +535,6 @@ export const useRepo = defineStore('repo', () => {
     graph, refsBySha, open, refresh, loadMore, select, refreshStatus, openDiff, closeDiff, stage, unstage, commit, close,
     checkoutBranch, createBranch, renameBranch, deleteBranch, busy, fetchAll, pullBranch, pushBranch, deleteRemoteBranch,
     conflict, mergeInto, rebaseOnto, cherryPick, continueOp, skipOp, abortOp, openConflict, resolve,
-    stash, applyStash, popLatestStash, dropStash, stageHunk, rebasePlan, openRebasePlan, startRebase, hidden, solo, toggleHidden, toggleSolo, resetFilters, loadAll
+    stash, applyStash, popLatestStash, dropStash, stageHunk, undo, redo, undoLabel, redoLabel, rebasePlan, openRebasePlan, startRebase, hidden, solo, toggleHidden, toggleSolo, resetFilters, loadAll
   }
 })

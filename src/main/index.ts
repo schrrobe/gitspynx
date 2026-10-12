@@ -1,9 +1,10 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme } from 'electron'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { type DiffTarget, type GitspynxApi, type HunkSelection, type RebaseStep, MAX_LOG_PAGE, type MenuItem, type RepoChange, type Resolution, type Session } from '../shared/types'
+import { type DiffTarget, type GitspynxApi, type HunkSelection, type RebaseStep, type UndoStep, MAX_LOG_PAGE, type MenuItem, type RepoChange, type Resolution, type Session } from '../shared/types'
 import {
   abortOperation,
+  applyUndo,
   checkout,
   cherryPick,
   continueOperation,
@@ -118,6 +119,27 @@ function rebaseSteps(v: unknown): RebaseStep[] {
     if (!s || !ACTIONS.includes(s.action as RebaseStep['action'])) throw new GitError('invalid argument')
     const message = typeof s.message === 'string' ? s.message.slice(0, 100_000) : undefined
     return { sha: str(s.sha), action: s.action as RebaseStep['action'], message }
+  })
+}
+
+function undoSteps(v: unknown): UndoStep[] {
+  if (!Array.isArray(v) || v.length > 10) throw new GitError('invalid argument')
+  return v.map((x): UndoStep => {
+    const s = x as Record<string, unknown> | null
+    switch (s?.type) {
+      case 'reset':
+        if (s.mode !== 'soft' && s.mode !== 'keep') break
+        return { type: 'reset', expect: str(s.expect), to: str(s.to), mode: s.mode }
+      case 'checkout':
+        return { type: 'checkout', branch: str(s.branch) }
+      case 'createBranch':
+        return { type: 'createBranch', name: str(s.name), sha: str(s.sha) }
+      case 'deleteBranch':
+        return { type: 'deleteBranch', name: str(s.name), expect: str(s.expect) }
+      case 'renameBranch':
+        return { type: 'renameBranch', from: str(s.from), to: str(s.to) }
+    }
+    throw new GitError('invalid argument')
   })
 }
 
@@ -242,6 +264,7 @@ const handlers: Handlers = {
   stageHunk: (_s, repo, sel) => stageHunk(knownRepo(repo), hunkSelection(sel)),
   readRebasePlan: (_s, repo, base) => readRebasePlan(knownRepo(repo), str(base)),
   interactiveRebase: (_s, repo, base, steps) => interactiveRebase(knownRepo(repo), str(base), rebaseSteps(steps)),
+  applyUndo: (_s, repo, steps) => applyUndo(knownRepo(repo), undoSteps(steps)),
   commit: (_s, repo, message, amend) => commit(knownRepo(repo), str(message), amend === true),
   createBranch: (_s, repo, name, start, switchTo) => createBranch(knownRepo(repo), str(name), str(start), switchTo === true),
   checkout: (_s, repo, branch) => checkout(knownRepo(repo), str(branch)),

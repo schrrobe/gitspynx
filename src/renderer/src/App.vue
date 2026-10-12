@@ -125,6 +125,10 @@ async function deleteWorkspace(name: string) {
       <span class="spacer" />
       <span v-if="repo.error" class="error" role="alert">{{ repo.error }}</span>
       <span v-else-if="repo.notice" class="notice" role="status">{{ repo.notice }}</span>
+      <div class="group" role="group" aria-label="Verlauf">
+        <button :disabled="!!repo.busy || !repo.undoLabel" :title="repo.undoLabel ? `Rückgängig: ${repo.undoLabel}` : 'Nichts rückgängig zu machen'" aria-label="Rückgängig" @click="repo.undo()">↶</button>
+        <button :disabled="!!repo.busy || !repo.redoLabel" :title="repo.redoLabel ? `Wiederholen: ${repo.redoLabel}` : 'Nichts zu wiederholen'" aria-label="Wiederholen" @click="repo.redo()">↷</button>
+      </div>
       <div class="group" role="group" aria-label="Remote">
         <button :disabled="!!repo.busy" @click="repo.fetchAll()">{{ repo.busy === 'fetch' ? 'Fetch…' : 'Fetch' }}</button>
         <button :disabled="!!repo.busy || !repo.info.head.branch" title="Rechtsklick: Pull-Modus wählen" @click="repo.pullBranch(settings.settings.pullMode)" @contextmenu.prevent="pullMenu">

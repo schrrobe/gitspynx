@@ -21,6 +21,7 @@ const methods: (keyof GitspynxApi)[] = [
   'stageHunk',
   'readRebasePlan',
   'interactiveRebase',
+  'applyUndo',
   'commit',
   'createBranch',
   'checkout',

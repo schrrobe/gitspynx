@@ -494,4 +494,73 @@ describe('repo store', () => {
       expect(repo.error).toBeNull() // /r's failure is not shown on /b
     })
   })
+
+  describe('undo/redo', () => {
+    const w = () => (globalThis as unknown as { window: { gitspynx: Record<string, unknown> } }).window
+    let head = 'a0'
+    let applied: unknown[][]
+
+    async function opened() {
+      head = 'a0'
+      applied = []
+      w().gitspynx.openRepo = async () => ({ ...info, head: { branch: 'main', sha: head } })
+      w().gitspynx.readLog = async () => page('c', 3)
+      w().gitspynx.commit = async () => void (head = 'b1')
+      w().gitspynx.applyUndo = async (_r: string, steps: unknown[]) => {
+        applied.push(steps)
+        const last = steps.at(-1) as { type: string; to?: string }
+        if (last.type === 'reset') head = last.to!
+      }
+      const repo = useRepo()
+      await repo.open('/r')
+      return repo
+    }
+
+    it('records a commit and undoes / redoes it with a soft reset', async () => {
+      const repo = await opened()
+      await repo.commit('Add feature\n\nbody', false)
+      expect(repo.undoLabel).toBe('Commit „Add feature“')
+      await repo.undo()
+      expect(applied.at(-1)).toEqual([{ type: 'reset', expect: 'b1', to: 'a0', mode: 'soft' }])
+      expect(repo.undoLabel).toBeNull()
+      expect(repo.redoLabel).toBe('Commit „Add feature“')
+      await repo.redo()
+      expect(applied.at(-1)).toEqual([{ type: 'reset', expect: 'a0', to: 'b1', mode: 'soft' }])
+      expect(repo.undoLabel).toBe('Commit „Add feature“')
+    })
+
+    it('drops the redo history when a new action is recorded', async () => {
+      const repo = await opened()
+      await repo.commit('one', false)
+      await repo.undo()
+      w().gitspynx.commit = async () => void (head = 'c2')
+      await repo.commit('two', false)
+      expect(repo.redoLabel).toBeNull()
+    })
+
+    it('forgets an entry whose undo was refused', async () => {
+      const repo = await opened()
+      await repo.commit('one', false)
+      w().gitspynx.applyUndo = async () => {
+        throw new Error('the repository changed since this action — it cannot be undone')
+      }
+      await repo.undo()
+      expect(repo.error).toMatch(/cannot be undone/)
+      expect(repo.undoLabel).toBeNull()
+      expect(repo.redoLabel).toBeNull()
+    })
+  })
+
+  it('shows the error of a failed repository operation after the reload', async () => {
+    const w = (globalThis as unknown as { window: { gitspynx: Record<string, unknown> } }).window
+    w.gitspynx.openRepo = async () => info
+    w.gitspynx.readLog = async () => page('c', 3)
+    w.gitspynx.checkout = async () => {
+      throw new Error("error: Your local changes would be overwritten by checkout")
+    }
+    const repo = useRepo()
+    await repo.open('/r')
+    await repo.checkoutBranch('other')
+    expect(repo.error).toMatch(/would be overwritten/)
+  })
 })

@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { lstat, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve, sep } from 'node:path'
-import type { Commit, CommitDetail, ConflictVersions, DiffTarget, FileDiff, FileStatus, HunkSelection, Operation, RebaseCommit, RebaseStep, RepoInfo, Resolution } from '../shared/types'
+import type { Commit, CommitDetail, ConflictVersions, DiffTarget, FileDiff, FileStatus, HunkSelection, Operation, RebaseCommit, RebaseStep, RepoInfo, Resolution, UndoStep } from '../shared/types'
 import { hunkKey } from '../shared/hunk'
 import { buildPatch } from './patch'
 import { LOG_FORMAT, parseDiff, parseLog, parseNameStatus, parseRefs, parseStatus, REF_FORMAT } from './parse'
@@ -507,4 +507,43 @@ export async function interactiveRebase(repo: string, base: string, steps: Rebas
   // GIT_SEQUENCE_EDITOR (env) wins over any configured or inherited editor; a failed exec
   // (e.g. a commit-msg hook rejecting the new message) is rescheduled instead of lost.
   return mayConflict(repo, ['rebase', '-i', '--reschedule-failed-exec', base], { GIT_SEQUENCE_EDITOR: `cp ${shellQuote(todoFile)}` })
+}
+
+// ---- undo / redo ----
+
+// Executes the steps of an undo or redo in order. Every step first checks that the repository is
+// still in the state the recorded action left it in; otherwise nothing more is changed.
+export async function applyUndo(repo: string, steps: UndoStep[]): Promise<void> {
+  for (const step of steps) {
+    switch (step.type) {
+      case 'reset': {
+        assertRevision(step.expect)
+        assertRevision(step.to)
+        const head = (await run(['rev-parse', '-q', '--verify', 'HEAD'], repo, [0, 1])).stdout.trim()
+        if (head !== step.expect) throw new GitError('the repository changed since this action — it cannot be undone')
+        // soft: keep the undone commit's changes staged; keep: like reset --hard but refuses to
+        // touch files with local changes
+        await run(['reset', step.mode === 'soft' ? '--soft' : '--keep', step.to], repo)
+        break
+      }
+      case 'checkout':
+        await checkout(repo, step.branch)
+        break
+      case 'createBranch':
+        await assertBranchName(repo, step.name)
+        assertRevision(step.sha)
+        await run(['branch', step.name, step.sha], repo)
+        break
+      case 'deleteBranch': {
+        await assertBranchName(repo, step.name)
+        const at = (await run(['rev-parse', '-q', '--verify', `refs/heads/${step.name}`], repo, [0, 1])).stdout.trim()
+        if (at !== step.expect) throw new GitError('the branch changed since this action — it cannot be undone')
+        await run(['branch', '-D', step.name], repo)
+        break
+      }
+      case 'renameBranch':
+        await renameBranch(repo, step.from, step.to)
+        break
+    }
+  }
 }

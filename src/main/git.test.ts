@@ -5,6 +5,7 @@ import { basename, join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import {
   abortOperation,
+  applyUndo,
   assertRevision,
   cherryPick,
   continueOperation,
@@ -933,5 +934,74 @@ describe('interactive rebase', () => {
     expect(result).toBe('conflicts')
     expect((await openRepo(rd)).operation).toBe('rebase')
     await abortOperation(rd)
+  })
+})
+
+describe('undo actions', () => {
+  let ud: string
+  const u = (...args: string[]) => execFileSync('git', args, { cwd: ud, env }).toString().trim()
+  let first: string, second: string
+
+  beforeAll(() => {
+    ud = mkdtempSync(join(tmpdir(), 'gitspynx-undo-'))
+    u('init', '-q', '-b', 'main')
+    writeFileSync(join(ud, 'a.txt'), '1\n')
+    u('add', '.')
+    u('commit', '-q', '-m', 'first')
+    first = u('rev-parse', 'HEAD')
+    writeFileSync(join(ud, 'a.txt'), '2\n')
+    u('commit', '-q', '-am', 'second')
+    second = u('rev-parse', 'HEAD')
+  })
+  afterAll(() => rmSync(ud, { recursive: true, force: true }))
+
+  it('moves HEAD back softly (undo commit) and forward again (redo), keeping changes staged', async () => {
+    await applyUndo(ud, [{ type: 'reset', expect: second, to: first, mode: 'soft' }])
+    expect(u('rev-parse', 'HEAD')).toBe(first)
+    expect(u('diff', '--cached', '--name-only')).toBe('a.txt')
+    await applyUndo(ud, [{ type: 'reset', expect: first, to: second, mode: 'soft' }])
+    expect(u('rev-parse', 'HEAD')).toBe(second)
+    expect(u('status', '--porcelain')).toBe('')
+  })
+
+  it('refuses when HEAD is no longer where the action left it', async () => {
+    await expect(applyUndo(ud, [{ type: 'reset', expect: first, to: first, mode: 'soft' }])).rejects.toThrow(/changed/)
+  })
+
+  it('keeps local changes with mode keep and refuses to overwrite them', async () => {
+    writeFileSync(join(ud, 'b.txt'), 'untracked\n')
+    await applyUndo(ud, [{ type: 'reset', expect: second, to: first, mode: 'keep' }])
+    expect(readFileSync(join(ud, 'b.txt'), 'utf8')).toBe('untracked\n')
+    await applyUndo(ud, [{ type: 'reset', expect: first, to: second, mode: 'keep' }])
+    writeFileSync(join(ud, 'a.txt'), 'local edit\n')
+    await expect(applyUndo(ud, [{ type: 'reset', expect: second, to: first, mode: 'keep' }])).rejects.toBeInstanceOf(GitError)
+    expect(readFileSync(join(ud, 'a.txt'), 'utf8')).toBe('local edit\n')
+    u('checkout', '--', 'a.txt')
+    rmSync(join(ud, 'b.txt'))
+  })
+
+  it('recreates a deleted branch and deletes it again only at the expected commit', async () => {
+    await applyUndo(ud, [{ type: 'createBranch', name: 'gone', sha: first }])
+    expect(u('rev-parse', 'gone')).toBe(first)
+    await expect(applyUndo(ud, [{ type: 'deleteBranch', name: 'gone', expect: second }])).rejects.toThrow(/changed/)
+    await applyUndo(ud, [{ type: 'deleteBranch', name: 'gone', expect: first }])
+    expect(u('branch', '--list', 'gone')).toBe('')
+  })
+
+  it('runs several steps in order (undo "create branch and switch")', async () => {
+    u('switch', '-q', '-c', 'feature')
+    await applyUndo(ud, [
+      { type: 'checkout', branch: 'main' },
+      { type: 'deleteBranch', name: 'feature', expect: second }
+    ])
+    expect(u('branch', '--show-current')).toBe('main')
+    expect(u('branch', '--list', 'feature')).toBe('')
+  })
+
+  it('renames branches back', async () => {
+    u('branch', 'old-name')
+    await applyUndo(ud, [{ type: 'renameBranch', from: 'old-name', to: 'new-name' }])
+    expect(u('branch', '--list', 'new-name')).toBe('new-name')
+    u('branch', '-D', 'new-name')
   })
 })

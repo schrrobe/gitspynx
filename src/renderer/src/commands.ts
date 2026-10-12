@@ -9,6 +9,7 @@ export interface Command {
   title: string
   keys?: string | string[] // default combo(s), see keymap.ts
   repeatable?: boolean // may fire on key repeat (zoom); others fire once per press
+  notInTextFields?: boolean // the combo keeps its text-editing meaning in inputs (Mod+Z)
   enabled?: () => boolean
   run: () => unknown
 }
@@ -23,7 +24,8 @@ export function commandForKey(
 ): Command | undefined {
   if (e.inTextField && !/^(Mod|Ctrl)\+/.test(combo)) return undefined
   const command = commands.find((c) => c.id === byCombo.get(combo))
-  if (!command || (e.repeat && !command.repeatable) || command.enabled?.() === false) return undefined
+  if (!command || (e.repeat && !command.repeatable) || (e.inTextField && command.notInTextFields) || command.enabled?.() === false)
+    return undefined
   return command
 }
 
@@ -57,6 +59,22 @@ export function buildCommands({ repo, tabs, settings, pickRepo }: Context): Comm
       keys: 'Ctrl+Shift+Tab',
       enabled: () => tabs.tabs.length > 1,
       run: () => tabs.activate((tabs.active + tabs.tabs.length - 1) % tabs.tabs.length)
+    },
+    {
+      id: 'edit.undo',
+      title: 'Rückgängig',
+      keys: 'Mod+Z',
+      notInTextFields: true,
+      enabled: () => idle() && !!repo.undoLabel,
+      run: () => repo.undo()
+    },
+    {
+      id: 'edit.redo',
+      title: 'Wiederholen',
+      keys: 'Mod+Shift+Z',
+      notInTextFields: true,
+      enabled: () => idle() && !!repo.redoLabel,
+      run: () => repo.redo()
     },
     { id: 'repo.refresh', title: 'Aktualisieren', keys: 'Mod+R', enabled: open, run: () => repo.refresh() },
     { id: 'repo.fetch', title: 'Fetch', keys: 'Mod+L', enabled: idle, run: () => repo.fetchAll() },
