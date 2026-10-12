@@ -47,6 +47,12 @@ describe('layoutGraph', () => {
     expect(rows[5].color).toBe(rows[0].color)
   })
 
+  it('does not cross lines when a merge pulls its first parent left', () => {
+    // C waits on M (lane 0) and P (lane 1); M's first parent P bends left, Q needs a fresh lane
+    const { rows } = layoutGraph([c('C', 'M', 'P'), c('M', 'P', 'Q'), c('P'), c('Q')])
+    expect(segs(rows[1].segments)).toEqual(['bottom:0->0', 'bottom:0->2', 'bottom:1->0', 'top:0->0', 'top:1->1'])
+  })
+
   it('reuses a freed lane for a later tip', () => {
     const { rows, width } = layoutGraph([c('M', 'A', 'B'), c('B', 'A'), c('A'), c('T', 'U'), c('U')])
     expect(rows.map((r) => r.col)).toEqual([0, 1, 0, 0, 0])

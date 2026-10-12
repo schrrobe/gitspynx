@@ -32,6 +32,11 @@ async function pullMenu() {
   if (mode) repo.pullBranch(mode as 'ff-only' | 'rebase' | 'merge')
 }
 
+async function closeRepo() {
+  repo.close()
+  recent.value = await window.gitspynx.recentRepos()
+}
+
 async function pick() {
   const path = await window.gitspynx.pickRepo()
   if (path) await repo.open(path)
@@ -70,11 +75,11 @@ async function pick() {
       </div>
       <button @click="repo.refresh()">Aktualisieren</button>
       <button @click="pick">Öffnen…</button>
-      <button @click="repo.close()">Schließen</button>
+      <button @click="closeRepo">Schließen</button>
     </header>
     <Sidebar class="sidebar" />
     <DiffView v-if="repo.diffTarget" class="list" />
-    <CommitList v-else class="list" />
+    <CommitList v-show="!repo.diffTarget" class="list" />
     <WorkdirPanel v-if="repo.selected === WIP" class="detail" />
     <CommitDetail v-else class="detail" />
   </div>

@@ -1,5 +1,10 @@
-import { describe, expect, it } from 'vitest'
-import { classifyChange } from './watch'
+import { execFileSync } from 'node:child_process'
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { gitDirsOutside } from './git'
+import { classifyChange, watchRepo } from './watch'
 
 describe('classifyChange', () => {
   it('ignores object writes and lock files', () => {
@@ -27,5 +32,32 @@ describe('classifyChange', () => {
     expect(classifyChange('.git\\refs\\heads\\x')).toBe('history')
     expect(classifyChange('.git\\objects\\ab\\cd')).toBe('ignore')
     expect(classifyChange('.git\\index')).toBe('status')
+  })
+})
+
+describe('watchRepo', () => {
+  const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_AUTHOR_NAME: 'T', GIT_AUTHOR_EMAIL: 't@x', GIT_COMMITTER_NAME: 'T', GIT_COMMITTER_EMAIL: 't@x' }
+  let root: string
+  beforeAll(() => {
+    root = realpathSync(mkdtempSync(join(tmpdir(), 'gitspynx-watch-')))
+    execFileSync('git', ['init', '-q', '-b', 'main', 'main'], { cwd: root, env })
+    execFileSync('git', ['commit', '-q', '--allow-empty', '-m', 'one'], { cwd: join(root, 'main'), env })
+    execFileSync('git', ['worktree', 'add', '-q', '-b', 'wt', join(root, 'wt')], { cwd: join(root, 'main'), env })
+  })
+  afterAll(() => rmSync(root, { recursive: true, force: true }))
+
+  const until = async (cond: () => boolean) => {
+    for (let i = 0; i < 40 && !cond(); i++) await new Promise((r) => setTimeout(r, 100))
+  }
+
+  it('reports history changes of a linked worktree whose git dir lives elsewhere', async () => {
+    const wt = join(root, 'wt')
+    const changes: string[] = []
+    const watcher = watchRepo(wt, await gitDirsOutside(wt), (k) => changes.push(k))
+    await new Promise((r) => setTimeout(r, 300))
+    execFileSync('git', ['commit', '-q', '--allow-empty', '-m', 'in worktree'], { cwd: wt, env })
+    await until(() => changes.includes('history'))
+    watcher.close()
+    expect(changes).toContain('history')
   })
 })

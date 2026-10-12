@@ -42,6 +42,7 @@ export interface GitspynxApi {
   pickRepo(): Promise<string | null>
   recentRepos(): Promise<string[]>
   openRepo(path: string): Promise<RepoInfo>
+  closeRepo(): Promise<void>
   readLog(repo: string, skip: number, limit: number): Promise<Commit[]> // pages over RepoInfo.tips
   readCommit(repo: string, sha: string): Promise<CommitDetail>
   readStatus(repo: string): Promise<FileStatus[]>

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import type { FileStatus } from '../../../shared/types'
+import { buildMessage } from '../commitMessage'
 import { useRepo } from '../stores/repo'
 
 const repo = useRepo()
@@ -9,15 +10,25 @@ const description = ref('')
 const amend = ref(false)
 const busy = ref(false)
 
-const canCommit = computed(() => summary.value.trim() && (repo.staged.length || amend.value) && !busy.value)
+const canCommit = computed(() => summary.value.trim() && (repo.staged.length || amend.value) && !busy.value && !repo.busy)
 const isOpen = (f: FileStatus, staged: boolean) =>
   repo.diffTarget && !('sha' in repo.diffTarget) && repo.diffTarget.path === f.path && repo.diffTarget.staged === staged
 
-// Ticking amend on an empty form prefills the last commit's message.
+// Ticking amend on an empty form prefills the last commit's message; unticking removes the
+// prefill again if it was not edited. Text typed while the message loads is never overwritten.
+let prefill: { summary: string; description: string } | null = null
 watch(amend, async (on) => {
-  if (!on || !repo.info?.head.sha) return
-  if (summary.value || description.value) return
+  if (!on) {
+    if (prefill && summary.value === prefill.summary && description.value === prefill.description) {
+      summary.value = description.value = ''
+    }
+    prefill = null
+    return
+  }
+  if (!repo.info?.head.sha || summary.value || description.value) return
   const last = await window.gitspynx.readCommit(repo.info.path, repo.info.head.sha)
+  if (!amend.value || summary.value || description.value) return
+  prefill = { summary: last.subject, description: last.body }
   summary.value = last.subject
   description.value = last.body
 })
@@ -25,8 +36,8 @@ watch(amend, async (on) => {
 async function submit() {
   if (!canCommit.value) return
   busy.value = true
-  const message = description.value.trim() ? `${summary.value.trim()}\n\n${description.value.trim()}` : summary.value.trim()
-  if (await repo.commit(message, amend.value)) {
+  if (await repo.commit(buildMessage(summary.value, description.value), amend.value)) {
+    prefill = null
     summary.value = ''
     description.value = ''
     amend.value = false
@@ -40,7 +51,7 @@ async function submit() {
     <section class="files">
       <header>
         <h3>Nicht gestaged <span class="dim">{{ repo.unstaged.length }}</span></h3>
-        <button v-if="repo.unstaged.length" @click="repo.stage(repo.unstaged.map((f) => f.path))">Alle stagen</button>
+        <button v-if="repo.unstaged.length" :disabled="!!repo.busy" @click="repo.stage(repo.unstaged.map((f) => f.path))">Alle stagen</button>
       </header>
       <ul>
         <li v-for="f in repo.unstaged" :key="f.path" :class="{ open: isOpen(f, false) }">
@@ -48,7 +59,7 @@ async function submit() {
             <span class="status mono" :class="f.unstaged === '?' ? 'A' : f.unstaged">{{ f.unstaged === '?' ? '+' : f.unstaged }}</span>
             <span class="path">{{ f.path }}</span>
           </button>
-          <button class="act" :aria-label="`${f.path} stagen`" @click="repo.stage([f.path])">Stage</button>
+          <button class="act" :disabled="!!repo.busy" :aria-label="`${f.path} stagen`" @click="repo.stage([f.path])">Stage</button>
         </li>
       </ul>
     </section>
@@ -56,7 +67,7 @@ async function submit() {
     <section class="files">
       <header>
         <h3>Gestaged <span class="dim">{{ repo.staged.length }}</span></h3>
-        <button v-if="repo.staged.length" @click="repo.unstageFiles(repo.staged)">Alle unstagen</button>
+        <button v-if="repo.staged.length" :disabled="!!repo.busy" @click="repo.unstageFiles(repo.staged)">Alle unstagen</button>
       </header>
       <ul>
         <li v-for="f in repo.staged" :key="f.path" :class="{ open: isOpen(f, true) }">
@@ -64,7 +75,7 @@ async function submit() {
             <span class="status mono" :class="f.staged ?? ''">{{ f.staged }}</span>
             <span class="path">{{ f.path }}</span>
           </button>
-          <button class="act" :aria-label="`${f.path} unstagen`" @click="repo.unstageFiles([f])">Unstage</button>
+          <button class="act" :disabled="!!repo.busy" :aria-label="`${f.path} unstagen`" @click="repo.unstageFiles([f])">Unstage</button>
         </li>
       </ul>
     </section>

@@ -89,14 +89,18 @@ export const useRepo = defineStore('repo', () => {
       }
     })
 
-  const select = (sha: string) =>
-    guard(async () => {
-      if (!info.value) return
-      selected.value = sha
-      if (sha === WIP) return
+  async function select(sha: string) {
+    if (!info.value) return
+    error.value = null
+    selected.value = sha
+    if (sha === WIP) return
+    try {
       const d = await window.gitspynx.readCommit(info.value.path, sha)
-      if (selected.value === sha) detail.value = d // ignore stale responses
-    })
+      if (selected.value === sha) detail.value = d
+    } catch (e) {
+      if (selected.value === sha) report(e) // a superseded selection's failure is irrelevant
+    }
+  }
 
   // Calls arriving while a refresh runs share it plus one follow-up run (watcher bursts, stage clicks).
   let statusRun: Promise<void> | null = null
@@ -118,7 +122,10 @@ export const useRepo = defineStore('repo', () => {
   const readStatusOnce = () =>
     guard(async () => {
       if (!info.value) return
-      status.value = await window.gitspynx.readStatus(info.value.path)
+      const path = info.value.path
+      const files = await window.gitspynx.readStatus(path)
+      if (info.value?.path !== path) return // repo closed or switched meanwhile
+      status.value = files
       const t = diffTarget.value
       if (!t || 'sha' in t) return
       // A file that moved between staged/unstaged keeps its diff open on the side it is now on.
@@ -143,12 +150,14 @@ export const useRepo = defineStore('repo', () => {
 
   const stage = (paths: string[]) =>
     guard(async () => {
+      if (busy.value) return
       await window.gitspynx.stage(info.value!.path, paths)
       await refreshStatus()
     })
 
   const unstage = (paths: string[]) =>
     guard(async () => {
+      if (busy.value) return
       await window.gitspynx.unstage(info.value!.path, paths)
       await refreshStatus()
     })
@@ -157,6 +166,7 @@ export const useRepo = defineStore('repo', () => {
   const unstageFiles = (files: FileStatus[]) => unstage(files.flatMap((f) => (f.oldPath ? [f.path, f.oldPath] : [f.path])))
 
   async function commit(message: string, amend: boolean): Promise<boolean> {
+    if (busy.value) return false
     error.value = null
     try {
       await window.gitspynx.commit(info.value!.path, message, amend)
@@ -169,10 +179,11 @@ export const useRepo = defineStore('repo', () => {
     }
   }
 
-  // Runs a ref-changing operation, then reloads history.
-  const mutate = (op: (repo: string) => Promise<void>) =>
+  // Runs a ref-changing operation, then reloads history. Refused while a network operation runs
+  // (a checkout in the middle of a pull would interleave with it).
+  const mutate = (op: (repo: string) => Promise<void>, partOfNetworkOp = false) =>
     guard(async () => {
-      if (!info.value) return
+      if (!info.value || (busy.value && !partOfNetworkOp)) return
       try {
         await op(info.value.path)
       } finally {
@@ -213,7 +224,7 @@ export const useRepo = defineStore('repo', () => {
     if (busy.value) return
     busy.value = kind
     try {
-      await mutate(op)
+      await mutate(op, true)
     } finally {
       busy.value = null
     }
@@ -239,6 +250,7 @@ export const useRepo = defineStore('repo', () => {
   }
 
   const close = () => {
+    void window.gitspynx.closeRepo()
     generation++
     loading.value = false
     info.value = null

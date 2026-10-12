@@ -20,7 +20,12 @@ const hunks = computed(() => {
   })
 })
 
-const onKey = (e: KeyboardEvent) => e.key === 'Escape' && repo.closeDiff()
+// Esc closes the diff unless it belongs to a dialog or a text field.
+const onKey = (e: KeyboardEvent) => {
+  if (e.key !== 'Escape' || e.defaultPrevented) return
+  if ((e.target as HTMLElement | null)?.closest('input, textarea, dialog')) return
+  repo.closeDiff()
+}
 onMounted(() => window.addEventListener('keydown', onKey))
 onUnmounted(() => window.removeEventListener('keydown', onKey))
 </script>

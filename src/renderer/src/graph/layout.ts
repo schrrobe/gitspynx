@@ -54,15 +54,16 @@ export function layoutGraph(commits: Node[]): { rows: GraphRow[]; width: number 
     if (col === -1) col = alloc(sha) // branch tip: nothing above it
     const color = colors[col]
     lanes[col] = null
+    const freeAfter: number[] = [] // freed only after all parents are placed, so no parent reuses them
     parents.forEach((p, n) => {
       let target = lanes.indexOf(p)
       if (n === 0 && target > col) {
         // keep the first-parent chain leftmost: the lane to the right bends into this one
         segments.find((s) => s.half === 'bottom' && s.x1 === target && s.x2 === target)!.x2 = col
-        lanes[target] = null
-        target = -1
-      }
-      if (target === -1) {
+        freeAfter.push(target)
+        lanes[col] = p
+        target = col
+      } else if (target === -1) {
         if (n === 0) {
           lanes[col] = p // first parent continues straight down
           target = col
@@ -72,6 +73,7 @@ export function layoutGraph(commits: Node[]): { rows: GraphRow[]; width: number 
       }
       segments.push({ x1: col, x2: target, half: 'bottom', color: colors[target] })
     })
+    for (const lane of freeAfter) lanes[lane] = null
 
     width = Math.max(width, lanes.length)
     return { sha, col, color, segments }

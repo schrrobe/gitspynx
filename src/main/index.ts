@@ -1,5 +1,4 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu } from 'electron'
-import type { FSWatcher } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { DiffTarget, GitspynxApi, MenuItem, RepoChange } from '../shared/types'
@@ -11,6 +10,7 @@ import {
   deleteRemoteBranch,
   fetchAll,
   GitError,
+  gitDirsOutside,
   isRejectedPush,
   openRepo,
   pull,
@@ -23,7 +23,7 @@ import {
   stage,
   unstage
 } from './git'
-import { watchRepo } from './watch'
+import { type RepoWatcher, watchRepo } from './watch'
 
 const recentFile = () => join(app.getPath('userData'), 'recent.json')
 const picked = new Set<string>() // folders the user chose in the dialog this session
@@ -86,16 +86,23 @@ function popupMenu(sender: Electron.WebContents, items: MenuItem[]): Promise<str
   })
 }
 
-// One watched repository at a time, kept across refreshes of the same repo.
+// One watched repository at a time, kept across refreshes of the same repo, dropped on close
+// or error (the next refresh starts a new one).
 // ponytail: single repo watcher, one per tab once tabs exist (M8)
-let watched: { path: string; watcher: FSWatcher } | null = null
-function watchOpenRepo(path: string, win: Electron.WebContents) {
-  if (watched?.path === path) return
+let watched: { path: string; watcher: RepoWatcher } | null = null
+function unwatch() {
   watched?.watcher.close()
-  const watcher = watchRepo(path, (kind) => {
-    if (!win.isDestroyed()) win.send('repo:changed', { repo: path, kind } satisfies RepoChange)
-  })
-  watcher.on('error', () => watcher.close())
+  watched = null
+}
+async function watchOpenRepo(path: string, win: Electron.WebContents) {
+  if (watched?.path === path) return
+  unwatch()
+  const watcher = watchRepo(
+    path,
+    await gitDirsOutside(path),
+    (kind) => !win.isDestroyed() && win.send('repo:changed', { repo: path, kind } satisfies RepoChange),
+    () => watched?.watcher === watcher && unwatch()
+  )
   watched = { path, watcher }
 }
 
@@ -122,11 +129,14 @@ const handlers: Handlers = {
     return res.filePaths[0]
   },
   recentRepos: () => loadRecent(),
+  async closeRepo() {
+    unwatch()
+  },
   async openRepo(sender, path) {
     const info = await openRepo(await allowedPath(path))
     opened.set(info.path, info.tips)
     await remember(info.path)
-    watchOpenRepo(info.path, sender)
+    await watchOpenRepo(info.path, sender)
     return info
   },
   readLog: (_s, repo, skip, limit) => {

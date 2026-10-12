@@ -28,6 +28,7 @@ beforeEach(() => {
   ;(globalThis as unknown as { window: unknown }).window = {
     gitspynx: {
       openRepo: async () => info,
+      closeRepo: async () => {},
       readStatus: async () => [],
       readFileDiff: async () => ({ binary: false, hunks: [] }),
       readLog: (_repo: string, skip: number) => {
@@ -221,5 +222,53 @@ describe('repo store', () => {
     w.gitspynx.unstage = async (_r: string, paths: string[]) => void (unstaged = paths)
     await repo.unstageFiles([{ path: 'new.ts', oldPath: 'old.ts', staged: 'R', unstaged: null, conflicted: false }])
     expect(unstaged.sort()).toEqual(['new.ts', 'old.ts'])
+  })
+
+  describe('consistency', () => {
+    async function opened() {
+      const repo = useRepo()
+      const first = repo.open('/r')
+      await flush()
+      logCalls[0].d.resolve(page('c', 3))
+      await first
+      return { repo, w: (globalThis as unknown as { window: { gitspynx: Record<string, unknown> } }).window }
+    }
+
+    it('ignores errors from a commit selection that is no longer current', async () => {
+      const { repo, w } = await opened()
+      const slow = deferred<never>()
+      w.gitspynx.readCommit = (_r: string, sha: string) => (sha === 'old' ? slow.promise : Promise.resolve({ sha }))
+      const a = repo.select('old')
+      await repo.select('new')
+      ;(slow as unknown as { resolve: (v: unknown) => void }).resolve(Promise.reject(new Error('boom')))
+      await a
+      expect(repo.error).toBeNull()
+    })
+
+    it('drops a status response that belongs to a repo closed meanwhile', async () => {
+      const { repo, w } = await opened()
+      const late = deferred<unknown[]>()
+      w.gitspynx.readStatus = () => late.promise
+      const run = repo.refreshStatus()
+      repo.close()
+      late.resolve([{ path: 'x', staged: 'M', unstaged: null, conflicted: false }])
+      await run
+      expect(repo.status).toEqual([])
+    })
+
+    it('blocks other repository operations while a network operation runs', async () => {
+      const { repo, w } = await opened()
+      const push = deferred<'ok'>()
+      w.gitspynx.push = () => push.promise
+      let checkedOut = false
+      w.gitspynx.checkout = async () => void (checkedOut = true)
+      w.gitspynx.readLog = async () => page('c', 3)
+      const p = repo.pushBranch()
+      await flush()
+      await repo.checkoutBranch('other')
+      expect(checkedOut).toBe(false)
+      push.resolve('ok')
+      await p
+    })
   })
 })

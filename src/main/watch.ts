@@ -11,12 +11,22 @@ export function classifyChange(file: string): ChangeKind {
   return 'status'
 }
 
-// Recursive watch with a 300 ms debounce; reports the strongest change kind of each burst.
-export function watchRepo(path: string, onChange: (kind: 'status' | 'history') => void): FSWatcher {
+export interface RepoWatcher {
+  close(): void
+}
+
+// Recursive watch of the work tree (plus git dirs living elsewhere, e.g. linked worktrees)
+// with a 300 ms debounce; reports the strongest change kind of each burst.
+export function watchRepo(
+  path: string,
+  outsideGitDirs: string[],
+  onChange: (kind: 'status' | 'history') => void,
+  onError: (e: Error) => void = () => {}
+): RepoWatcher {
   let timer: NodeJS.Timeout | undefined
   let pending: 'status' | 'history' | null = null
-  const watcher = watch(path, { recursive: true }, (_event, file) => {
-    const kind = classifyChange(String(file ?? ''))
+  const report = (file: string) => {
+    const kind = classifyChange(file)
     if (kind === 'ignore') return
     if (pending !== 'history') pending = kind
     clearTimeout(timer)
@@ -24,7 +34,16 @@ export function watchRepo(path: string, onChange: (kind: 'status' | 'history') =
       onChange(pending!)
       pending = null
     }, 300)
-  })
-  watcher.on('close', () => clearTimeout(timer))
-  return watcher
+  }
+  const watchers: FSWatcher[] = [
+    watch(path, { recursive: true }, (_e, file) => report(String(file ?? ''))),
+    ...outsideGitDirs.map((dir) => watch(dir, { recursive: true }, (_e, file) => report(`.git/${file ?? ''}`)))
+  ]
+  for (const w of watchers) w.on('error', onError)
+  return {
+    close() {
+      clearTimeout(timer)
+      for (const w of watchers) w.close()
+    }
+  }
 }

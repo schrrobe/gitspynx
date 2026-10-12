@@ -5,6 +5,7 @@ const methods: (keyof GitspynxApi)[] = [
   'pickRepo',
   'recentRepos',
   'openRepo',
+  'closeRepo',
   'readLog',
   'readCommit',
   'readStatus',

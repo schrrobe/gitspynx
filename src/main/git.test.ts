@@ -21,6 +21,7 @@ import {
   readLog,
   readStatus,
   renameBranch,
+  run,
   stage,
   unstage
 } from './git'
@@ -128,6 +129,26 @@ describe('git backend', () => {
     expect(root.files).toEqual([{ status: 'A', path: 'a.txt' }])
   })
 
+  it('reports renames in commit details', async () => {
+    g('mv', 'a.txt', 'renamed.txt')
+    g('commit', '-q', '-m', 'rename')
+    const d = await readCommit(dir, 'HEAD')
+    g('reset', '-q', '--hard', 'HEAD~1')
+    expect(d.files).toEqual([{ status: 'R', path: 'renamed.txt', oldPath: 'a.txt' }])
+  })
+
+  it('says so when the repository folder is gone', async () => {
+    await expect(run(['status'], join(dir, 'does-not-exist'))).rejects.toThrow(/folder not found/)
+  })
+
+  it('kills the whole process tree on timeout', async () => {
+    const marker = `sleep 7.${process.pid}`
+    await expect(run(['-c', `alias.hang=!${marker}; true`, 'hang'], dir, [0], undefined, 300)).rejects.toThrow(/timed out/)
+    await new Promise((r) => setTimeout(r, 200))
+    const left = execFileSync('ps', ['-axo', 'command']).toString().split('\n').filter((l) => l.startsWith(marker))
+    expect(left).toEqual([])
+  })
+
   it('refuses revisions that could be read as options', () => {
     expect(() => assertRevision('--output=/tmp/x')).toThrow(GitError)
     expect(() => assertRevision('a'.repeat(40))).not.toThrow()
@@ -219,6 +240,17 @@ describe('working directory', () => {
     rmSync(many, { recursive: true })
   })
 
+  it('unstages a file that was staged and then modified before the first commit', async () => {
+    const fresh = mkdtempSync(join(tmpdir(), 'gitspynx-unborn-'))
+    execFileSync('git', ['init', '-q'], { cwd: fresh, env })
+    writeFileSync(join(fresh, 'x.txt'), 'one')
+    await stage(fresh, ['x.txt'])
+    writeFileSync(join(fresh, 'x.txt'), 'two')
+    await unstage(fresh, ['x.txt'])
+    expect(await readStatus(fresh)).toEqual([{ path: 'x.txt', staged: null, unstaged: '?', conflicted: false }])
+    rmSync(fresh, { recursive: true })
+  })
+
   it('refuses to commit with an empty message', async () => {
     await expect(commit(wd, '   \n', false)).rejects.toBeInstanceOf(GitError)
   })
@@ -254,6 +286,13 @@ describe('branches', () => {
     await checkout(bd, 'origin/topic')
     expect(b('branch', '--show-current')).toBe('topic')
     expect(b('rev-parse', '--abbrev-ref', 'topic@{upstream}')).toBe('origin/topic')
+  })
+
+  it('switches to the existing local branch when a remote branch is checked out again', async () => {
+    await checkout(bd, 'main')
+    await checkout(bd, 'origin/topic') // local topic exists since the previous test
+    expect(b('branch', '--show-current')).toBe('topic')
+    await checkout(bd, 'main')
   })
 
   it('renames and deletes branches', async () => {

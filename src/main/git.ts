@@ -1,5 +1,6 @@
-import { execFile } from 'node:child_process'
-import { basename, dirname } from 'node:path'
+import { spawn } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { basename, dirname, join, resolve, sep } from 'node:path'
 import type { Commit, CommitDetail, DiffTarget, FileDiff, FileStatus, RepoInfo } from '../shared/types'
 import { LOG_FORMAT, parseDiff, parseLog, parseNameStatus, parseRefs, parseStatus, REF_FORMAT } from './parse'
 
@@ -14,27 +15,53 @@ interface Result {
   stdout: string
 }
 
+const MAX_OUTPUT = 256 * 1024 * 1024
+
 // Runs git without a shell. Exit codes listed in okCodes are returned instead of thrown.
+// A timeout kills git's whole process group (ssh, credential helpers, hooks included).
 export function run(args: string[], cwd: string, okCodes = [0], stdin?: string, timeout = 0): Promise<Result> {
   return new Promise((resolve, reject) => {
-    const child = execFile(
-      'git',
-      ['--no-optional-locks', ...args],
-      {
-        cwd,
-        maxBuffer: 256 * 1024 * 1024,
-        timeout,
-        // English messages for the few checks that match git output; hooks inherit only this
-        env: { ...process.env, GIT_TERMINAL_PROMPT: '0', LC_MESSAGES: 'C' }
-      },
-      (err, stdout, stderr) => {
-        const code = err ? (typeof err.code === 'number' ? err.code : -1) : 0
-        if (okCodes.includes(code)) return resolve({ code, stdout })
-        if (err?.killed) return reject(new GitError(`git ${args[0]} timed out after ${timeout / 1000}s`, code, stderr))
-        reject(new GitError(stderr.trim() || err?.message || 'git failed', code, stderr))
+    if (!existsSync(cwd)) return reject(new GitError(`folder not found: ${cwd}`))
+    const child = spawn('git', ['--no-optional-locks', ...args], {
+      cwd,
+      detached: timeout > 0 && process.platform !== 'win32', // own process group for the timer
+      // English messages for the few checks that match git output; hooks inherit only this
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', LC_MESSAGES: 'C' }
+    })
+    const out: Buffer[] = []
+    const err: Buffer[] = []
+    let size = 0
+    let failure: GitError | null = null
+    const stop = (e: GitError) => {
+      failure ??= e
+      try {
+        if (child.pid && timeout > 0 && process.platform !== 'win32') process.kill(-child.pid, 'SIGTERM')
+        else child.kill('SIGTERM')
+      } catch {
+        child.kill('SIGTERM')
       }
-    )
-    child.stdin?.end(stdin)
+    }
+    const timer = timeout > 0 ? setTimeout(() => stop(new GitError(`git ${args[0]} timed out after ${timeout / 1000}s`)), timeout) : undefined
+    child.stdout.on('data', (d: Buffer) => {
+      size += d.length
+      if (size > MAX_OUTPUT) stop(new GitError(`git ${args[0]} output too large`))
+      else out.push(d)
+    })
+    child.stderr.on('data', (d: Buffer) => err.push(d))
+    child.on('error', (e: NodeJS.ErrnoException) => {
+      clearTimeout(timer)
+      reject(new GitError(e.code === 'ENOENT' ? 'git executable not found — is git installed?' : e.message))
+    })
+    child.on('close', (code) => {
+      clearTimeout(timer)
+      const stderr = Buffer.concat(err).toString()
+      if (failure) return reject(new GitError(failure.message, code, stderr))
+      const exit = code ?? -1
+      if (okCodes.includes(exit)) return resolve({ code: exit, stdout: Buffer.concat(out).toString() })
+      reject(new GitError(stderr.trim() || `git ${args[0]} failed (${exit})`, exit, stderr))
+    })
+    child.stdin.on('error', () => {}) // EPIPE when git exits without reading stdin; exit code tells the story
+    child.stdin.end(stdin)
   })
 }
 
@@ -79,7 +106,7 @@ export async function readCommit(repo: string, rev: string): Promise<CommitDetai
   assertRevision(rev)
   const [meta, files] = await Promise.all([
     run(['show', '-s', `--format=${DETAIL_FORMAT}`, rev, '--'], repo),
-    run(['diff-tree', '-r', '--root', '-m', '--first-parent', '--no-commit-id', '--name-status', '-z', rev, '--'], repo)
+    run(['diff-tree', '-r', '-M', '--root', '-m', '--first-parent', '--no-commit-id', '--name-status', '-z', rev, '--'], repo)
   ])
   const [sha, parents, author, email, date, subject, committer, committerDate, ...body] = meta.stdout.split('\0')
   return {
@@ -112,7 +139,8 @@ export async function stage(repo: string, paths: string[]): Promise<void> {
 
 export async function unstage(repo: string, paths: string[]): Promise<void> {
   const head = await run(['rev-parse', '-q', '--verify', 'HEAD'], repo, [0, 1])
-  const args = head.code === 1 ? ['rm', '--cached', '-r', '-q'] : ['restore', '--staged'] // rm: no commit yet
+  // no commit yet: rm --cached (-f: keep going if the work tree differs from the index, like restore does)
+  const args = head.code === 1 ? ['rm', '--cached', '-r', '-q', '-f'] : ['restore', '--staged']
   await run([LITERAL, ...args, ...FROM_STDIN], repo, [0], paths.join('\0'))
 }
 
@@ -149,11 +177,18 @@ export async function createBranch(repo: string, name: string, start: string, sw
   await run(switchTo ? ['switch', '-c', name, start] : ['branch', name, start], repo)
 }
 
-// Local branch: switch to it. Remote branch (e.g. origin/topic): create a tracking branch.
+const hasLocalBranch = async (repo: string, name: string) =>
+  (await run(['show-ref', '--verify', '--quiet', `refs/heads/${name}`], repo, [0, 1])).code === 0
+
+// Local branch: switch to it. Remote branch (e.g. origin/topic): switch to the local branch of
+// the same name if there is one, else create a tracking branch.
 export async function checkout(repo: string, branch: string): Promise<void> {
   await assertBranchName(repo, branch)
-  const local = await run(['show-ref', '--verify', '--quiet', `refs/heads/${branch}`], repo, [0, 1])
-  await run(local.code === 0 ? ['switch', branch] : ['switch', '--track', branch], repo)
+  if (await hasLocalBranch(repo, branch)) return void (await run(['switch', branch], repo))
+  const remote = (await remotes(repo)).find((r) => branch.startsWith(`${r}/`))
+  const local = remote && branch.slice(remote.length + 1)
+  if (local && (await hasLocalBranch(repo, local))) return void (await run(['switch', local], repo))
+  await run(['switch', '--track', branch], repo)
 }
 
 export async function renameBranch(repo: string, from: string, to: string): Promise<void> {
@@ -167,7 +202,8 @@ export async function deleteBranch(repo: string, name: string, force: boolean): 
   await run(['branch', force ? '-D' : '-d', name], repo)
 }
 
-const NETWORK_TIMEOUT = 120_000
+const NETWORK_TIMEOUT = 120_000 // fetch: stalls are failures
+const PUSH_TIMEOUT = 600_000 // push may legitimately upload a lot
 
 export async function fetchAll(repo: string): Promise<void> {
   await run(['fetch', '--all', '--prune', '--quiet'], repo, [0], undefined, NETWORK_TIMEOUT)
@@ -175,9 +211,14 @@ export async function fetchAll(repo: string): Promise<void> {
 
 export type PullMode = 'ff-only' | 'rebase' | 'merge'
 
+// Fetch (network, time-limited) then integrate locally without a timer, so a slow merge or
+// rebase is never killed halfway.
 export async function pull(repo: string, mode: PullMode): Promise<void> {
-  const flag = { 'ff-only': '--ff-only', rebase: '--rebase', merge: '--no-rebase' }[mode]
-  await run(['pull', flag, '--quiet'], repo, [0], undefined, NETWORK_TIMEOUT)
+  const upstream = await run(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'], repo, [0, 128])
+  if (upstream.code !== 0) throw new GitError('the current branch has no upstream branch')
+  await run(['fetch', '--quiet'], repo, [0], undefined, NETWORK_TIMEOUT)
+  const integrate = { 'ff-only': ['merge', '--ff-only'], rebase: ['rebase'], merge: ['merge', '--no-edit'] }[mode]
+  await run([...integrate, '@{upstream}'], repo)
 }
 
 async function remotes(repo: string): Promise<string[]> {
@@ -197,13 +238,13 @@ export async function push(repo: string, force: boolean): Promise<void> {
   const lease = force ? ['--force-with-lease', '--force-if-includes'] : []
   const upstream = await run(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'], repo, [0, 128])
   if (upstream.code === 0) {
-    await run(['push', ...lease], repo, [0], undefined, NETWORK_TIMEOUT)
+    await run(['push', ...lease], repo, [0], undefined, PUSH_TIMEOUT)
     return
   }
   const all = await remotes(repo)
   if (!all.length) throw new GitError('no remote configured')
   const target = (await config(repo, 'remote.pushDefault')) || (all.includes('origin') ? 'origin' : all[0])
-  await run(['push', '-u', ...lease, target, 'HEAD'], repo, [0], undefined, NETWORK_TIMEOUT)
+  await run(['push', '-u', ...lease, target, 'HEAD'], repo, [0], undefined, PUSH_TIMEOUT)
 }
 
 export function isRejectedPush(e: unknown): boolean {
@@ -216,5 +257,13 @@ export async function deleteRemoteBranch(repo: string, remoteBranch: string): Pr
   if (!remote) throw new GitError(`unknown remote branch: ${remoteBranch}`)
   const branch = remoteBranch.slice(remote.length + 1)
   await assertBranchName(repo, branch)
-  await run(['push', remote, '--delete', `refs/heads/${branch}`], repo, [0], undefined, NETWORK_TIMEOUT)
+  await run(['push', remote, '--delete', `refs/heads/${branch}`], repo, [0], undefined, PUSH_TIMEOUT)
+}
+
+// Git directories that live outside the work tree (linked worktrees, submodules), so a
+// watcher on the work tree alone would miss ref and index changes.
+export async function gitDirsOutside(path: string): Promise<string[]> {
+  const out = (await run(['rev-parse', '--absolute-git-dir', '--git-common-dir'], path)).stdout.trim().split('\n')
+  const dirs = [...new Set(out.map((d) => resolve(path, d)))]
+  return dirs.filter((d) => d !== join(path, '.git') && !d.startsWith(path + sep))
 }
