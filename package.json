@@ -1,0 +1,31 @@
+{
+  "name": "gitspynx",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Git desktop client",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "start": "electron-vite preview",
+    "test": "vitest run",
+    "typecheck": "vue-tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "@vitejs/plugin-vue": "^6.0.10",
+    "electron": "^44.7.0",
+    "electron-vite": "^5.0.0",
+    "pinia": "^4.0.3",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.7",
+    "vitest": "^5.0.4",
+    "vue": "^3.5.43",
+    "vue-tsc": "^3.3.13"
+  },
+  "allowScripts": {
+    "electron@44.7.0": true,
+    "esbuild@0.25.12": true,
+    "esbuild@0.28.2": true
+  }
+}

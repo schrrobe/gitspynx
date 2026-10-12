@@ -2,7 +2,7 @@
 
 Eigenständige Git-Desktop-App (geplant: Electron · TypeScript · Vue 3 · Pinia · Vite).
 
-Aktueller Stand: **Analyse- und Planungsphase**. Noch kein App-Code.
+Aktueller Stand: **M1** – Repository öffnen und Commit-Graph (read-only).
 
 ## Dokumentation
 
@@ -23,3 +23,15 @@ Statische Analyse von GitKraken Desktop 12.5.0 als Referenz für Funktionsumfang
 | [11-evidence-index](docs/reverse-engineering/11-evidence-index.md) | Artefakt-Hashes, Fundstellen-Konvention, REA-Evidenz |
 
 Die Analyse nutzt ausschließlich die lokal installierte Kopie, verändert die Installation nicht und übernimmt weder Code noch Marken oder Assets. Die Analysekopie liegt in `.work/` (gitignored) und lässt sich mit `tools/prepare-work.sh` neu erzeugen.
+
+## Entwicklung
+
+```sh
+npm install
+npm run dev        # App mit Hot Reload
+npm test           # Vitest (Parser, Git-Backend gegen echte Temp-Repos, Graph-Layout)
+npm run typecheck
+npm run build      # nach out/
+```
+
+Stand: M0 (Gerüst) + M1 (Repo öffnen, Zuletzt-geöffnet-Liste, Refs, paginierter Commit-Graph, Commit-Details) aus dem [Implementierungsplan](docs/reverse-engineering/08-implementation-plan.md).
