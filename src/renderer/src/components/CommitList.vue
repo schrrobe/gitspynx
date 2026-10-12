@@ -25,6 +25,17 @@ function onScroll() {
   if (el.scrollTop + el.clientHeight > el.scrollHeight - ROW * 50) repo.loadMore()
 }
 
+async function menu(sha: string) {
+  repo.select(sha)
+  const id = await window.gitspynx.showContextMenu([
+    { id: 'create', label: 'Branch hier erstellen…' },
+    { separator: true },
+    { id: 'copy', label: 'SHA kopieren' }
+  ])
+  if (id === 'create') repo.createBranch(sha)
+  else if (id === 'copy') navigator.clipboard.writeText(sha)
+}
+
 function move(delta: number) {
   const list = repo.commits
   const i = list.findIndex((c) => c.sha === repo.selected)
@@ -65,6 +76,7 @@ function move(delta: number) {
         :class="{ selected: v.c.sha === repo.selected }"
         :style="{ transform: `translateY(${v.top}px)` }"
         @click="repo.select(v.c.sha)"
+        @contextmenu.prevent="menu(v.c.sha)"
       >
         <GraphCell :row="v.row" :width="repo.graph.width" />
         <span class="subject">

@@ -49,7 +49,15 @@ export interface GitspynxApi {
   unstage(repo: string, paths: string[]): Promise<void>
   readFileDiff(repo: string, target: DiffTarget): Promise<FileDiff>
   commit(repo: string, message: string, amend: boolean): Promise<void>
+  createBranch(repo: string, name: string, start: string, switchTo: boolean): Promise<void>
+  checkout(repo: string, branch: string): Promise<void>
+  renameBranch(repo: string, from: string, to: string): Promise<void>
+  deleteBranch(repo: string, name: string, force: boolean): Promise<void>
+  showContextMenu(items: MenuItem[]): Promise<string | null> // id of the clicked item
+  confirm(message: string, detail: string, okLabel: string): Promise<boolean>
 }
+
+export type MenuItem = { id: string; label: string; enabled?: boolean } | { separator: true }
 
 // Pushed from main whenever files in the open repository change; git = something under .git/ changed.
 export interface RepoChange {

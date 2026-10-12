@@ -11,7 +11,13 @@ const methods: (keyof GitspynxApi)[] = [
   'stage',
   'unstage',
   'readFileDiff',
-  'commit'
+  'commit',
+  'createBranch',
+  'checkout',
+  'renameBranch',
+  'deleteBranch',
+  'showContextMenu',
+  'confirm'
 ]
 
 const api = Object.fromEntries(

@@ -128,3 +128,34 @@ export async function commit(repo: string, message: string, amend: boolean): Pro
   if (!message.trim()) throw new GitError('commit message is empty')
   await run(['commit', '-F', '-', ...(amend ? ['--amend'] : [])], repo, [0], message)
 }
+
+// Branch names come from the renderer: no option-like names, and git's own ref-name rules.
+export async function assertBranchName(repo: string, name: string): Promise<void> {
+  if (name.startsWith('-')) throw new GitError(`invalid branch name: ${name}`)
+  const { code } = await run(['check-ref-format', '--branch', name], repo, [0, 1, 128])
+  if (code !== 0) throw new GitError(`invalid branch name: ${name}`)
+}
+
+export async function createBranch(repo: string, name: string, start: string, switchTo: boolean): Promise<void> {
+  await assertBranchName(repo, name)
+  assertRevision(start)
+  await run(switchTo ? ['switch', '-c', name, start] : ['branch', name, start], repo)
+}
+
+// Local branch: switch to it. Remote branch (e.g. origin/topic): create a tracking branch.
+export async function checkout(repo: string, branch: string): Promise<void> {
+  await assertBranchName(repo, branch)
+  const local = await run(['show-ref', '--verify', '--quiet', `refs/heads/${branch}`], repo, [0, 1])
+  await run(local.code === 0 ? ['switch', branch] : ['switch', '--track', branch], repo)
+}
+
+export async function renameBranch(repo: string, from: string, to: string): Promise<void> {
+  await assertBranchName(repo, from)
+  await assertBranchName(repo, to)
+  await run(['branch', '-m', from, to], repo)
+}
+
+export async function deleteBranch(repo: string, name: string, force: boolean): Promise<void> {
+  await assertBranchName(repo, name)
+  await run(['branch', force ? '-D' : '-d', name], repo)
+}

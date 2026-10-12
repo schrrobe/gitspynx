@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, ref, shallowRef } from 'vue'
 import type { Commit, CommitDetail, DiffTarget, FileDiff, FileStatus, RepoInfo } from '../../../shared/types'
 import { layoutGraph } from '../graph/layout'
+import { ask } from '../prompt'
 
 const PAGE = 2000
 export const WIP = 'WIP' // pseudo selection for the working directory
@@ -147,6 +148,46 @@ export const useRepo = defineStore('repo', () => {
     }
   }
 
+  // Runs a ref-changing operation, then reloads history.
+  const mutate = (op: (repo: string) => Promise<void>) =>
+    guard(async () => {
+      if (!info.value) return
+      try {
+        await op(info.value.path)
+      } finally {
+        await refresh()
+      }
+    })
+
+  const checkoutBranch = (name: string) => mutate((r) => window.gitspynx.checkout(r, name))
+
+  async function createBranch(start: string) {
+    const name = await ask('Neuer Branch', '', 'Erstellen und auschecken')
+    if (name) await mutate((r) => window.gitspynx.createBranch(r, name, start, true))
+  }
+
+  async function renameBranch(from: string) {
+    const to = await ask(`Branch „${from}“ umbenennen`, from, 'Umbenennen')
+    if (to && to !== from) await mutate((r) => window.gitspynx.renameBranch(r, from, to))
+  }
+
+  async function deleteBranch(name: string) {
+    if (!(await window.gitspynx.confirm(`Branch „${name}“ löschen?`, '', 'Löschen'))) return
+    await mutate(async (r) => {
+      try {
+        await window.gitspynx.deleteBranch(r, name, false)
+      } catch (e) {
+        if (!/not fully merged/.test(String(e))) throw e
+        const force = await window.gitspynx.confirm(
+          `„${name}“ ist nicht vollständig gemergt.`,
+          'Commits, die nur auf diesem Branch liegen, sind danach nur noch über das Reflog erreichbar.',
+          'Trotzdem löschen'
+        )
+        if (force) await window.gitspynx.deleteBranch(r, name, true)
+      }
+    })
+  }
+
   const close = () => {
     generation++
     loading.value = false
@@ -158,6 +199,7 @@ export const useRepo = defineStore('repo', () => {
 
   return {
     info, commits, complete, loading, error, selected, detail, status, staged, unstaged, diffTarget, diff,
-    graph, refsBySha, open, refresh, loadMore, select, refreshStatus, openDiff, closeDiff, stage, unstage, commit, close
+    graph, refsBySha, open, refresh, loadMore, select, refreshStatus, openDiff, closeDiff, stage, unstage, commit, close,
+    checkoutBranch, createBranch, renameBranch, deleteBranch
   }
 })

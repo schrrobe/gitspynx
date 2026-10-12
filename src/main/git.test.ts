@@ -3,7 +3,22 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { assertRevision, commit, GitError, openRepo, readCommit, readFileDiff, readLog, readStatus, stage, unstage } from './git'
+import {
+  assertRevision,
+  checkout,
+  commit,
+  createBranch,
+  deleteBranch,
+  GitError,
+  openRepo,
+  readCommit,
+  readFileDiff,
+  readLog,
+  readStatus,
+  renameBranch,
+  stage,
+  unstage
+} from './git'
 
 const env = {
   ...process.env,
@@ -178,5 +193,61 @@ describe('working directory', () => {
 
   it('refuses to commit with an empty message', async () => {
     await expect(commit(wd, '   \n', false)).rejects.toBeInstanceOf(GitError)
+  })
+})
+
+describe('branches', () => {
+  let bd: string
+  const b = (...args: string[]) => execFileSync('git', args, { cwd: bd, env }).toString().trim()
+
+  beforeAll(() => {
+    bd = mkdtempSync(join(tmpdir(), 'gitspynx-br-'))
+    b('init', '-q', '-b', 'main')
+    writeFileSync(join(bd, 'a.txt'), '1')
+    b('add', '.')
+    b('commit', '-q', '-m', 'one')
+  })
+  afterAll(() => rmSync(bd, { recursive: true, force: true }))
+
+  it('creates a branch at a commit, optionally checking it out', async () => {
+    const head = b('rev-parse', 'HEAD')
+    await createBranch(bd, 'feature/x', head, false)
+    expect(b('rev-parse', 'feature/x')).toBe(head)
+    expect(b('branch', '--show-current')).toBe('main')
+    await createBranch(bd, 'work', head, true)
+    expect(b('branch', '--show-current')).toBe('work')
+  })
+
+  it('switches to a local branch and to a remote branch via a tracking branch', async () => {
+    await checkout(bd, 'main')
+    expect(b('branch', '--show-current')).toBe('main')
+    b('remote', 'add', 'origin', 'https://example.invalid/repo.git')
+    b('update-ref', 'refs/remotes/origin/topic', 'HEAD')
+    await checkout(bd, 'origin/topic')
+    expect(b('branch', '--show-current')).toBe('topic')
+    expect(b('rev-parse', '--abbrev-ref', 'topic@{upstream}')).toBe('origin/topic')
+  })
+
+  it('renames and deletes branches', async () => {
+    await renameBranch(bd, 'feature/x', 'feature/y')
+    expect(b('branch', '--list', 'feature/*')).toBe('feature/y')
+    await deleteBranch(bd, 'feature/y', false)
+    expect(b('branch', '--list', 'feature/*')).toBe('')
+  })
+
+  it('refuses to delete an unmerged branch unless forced', async () => {
+    await createBranch(bd, 'unmerged', b('rev-parse', 'HEAD'), true)
+    b('commit', '-q', '--allow-empty', '-m', 'only here')
+    await checkout(bd, 'main')
+    await expect(deleteBranch(bd, 'unmerged', false)).rejects.toThrow(/not fully merged/)
+    await deleteBranch(bd, 'unmerged', true)
+    expect(b('branch', '--list', 'unmerged')).toBe('')
+  })
+
+  it('rejects invalid or option-like branch names', async () => {
+    const head = b('rev-parse', 'HEAD')
+    await expect(createBranch(bd, '-D', head, false)).rejects.toBeInstanceOf(GitError)
+    await expect(createBranch(bd, 'bad..name', head, false)).rejects.toBeInstanceOf(GitError)
+    await expect(checkout(bd, '--orphan=x')).rejects.toBeInstanceOf(GitError)
   })
 })

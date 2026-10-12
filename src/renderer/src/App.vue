@@ -4,6 +4,7 @@ import CommitDetail from './components/CommitDetail.vue'
 import CommitList from './components/CommitList.vue'
 import DiffView from './components/DiffView.vue'
 import Sidebar from './components/Sidebar.vue'
+import PromptDialog from './components/PromptDialog.vue'
 import WorkdirPanel from './components/WorkdirPanel.vue'
 import { useRepo, WIP } from './stores/repo'
 
@@ -57,6 +58,7 @@ async function pick() {
     <WorkdirPanel v-if="repo.selected === WIP" class="detail" />
     <CommitDetail v-else class="detail" />
   </div>
+  <PromptDialog />
 </template>
 
 <style scoped>

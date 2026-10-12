@@ -4,6 +4,27 @@ import type { Ref } from '../../../shared/types'
 import { useRepo } from '../stores/repo'
 
 const repo = useRepo()
+const isHead = (r: Ref) => r.kind === 'local' && r.name === repo.info?.head.branch
+
+async function menu(r: Ref) {
+  const branch = r.kind === 'local' || r.kind === 'remote'
+  const id = await window.gitspynx.showContextMenu([
+    ...(branch ? [{ id: 'checkout', label: r.kind === 'remote' ? 'Als lokalen Branch auschecken' : 'Auschecken', enabled: !isHead(r) }] : []),
+    { id: 'create', label: 'Branch hier erstellen…' },
+    ...(r.kind === 'local'
+      ? [{ id: 'rename', label: 'Umbenennen…' }, { separator: true as const }, { id: 'delete', label: 'Löschen…', enabled: !isHead(r) }]
+      : [])
+  ])
+  if (id === 'checkout') repo.checkoutBranch(r.name)
+  else if (id === 'create') repo.createBranch(r.target)
+  else if (id === 'rename') repo.renameBranch(r.name)
+  else if (id === 'delete') repo.deleteBranch(r.name)
+}
+
+function open(r: Ref) {
+  if ((r.kind === 'local' && !isHead(r)) || r.kind === 'remote') repo.checkoutBranch(r.name)
+}
+
 const sections = computed(() => {
   const refs = repo.info?.refs ?? []
   const of = (kind: Ref['kind']) => refs.filter((r) => r.kind === kind)
@@ -24,9 +45,11 @@ const sections = computed(() => {
         v-for="r in s.refs"
         :key="r.fullName"
         class="item"
-        :class="{ head: r.kind === 'local' && r.name === repo.info?.head.branch }"
-        :title="r.fullName"
+        :class="{ head: isHead(r) }"
+        :title="`${r.fullName} – Doppelklick zum Auschecken`"
         @click="repo.select(r.target)"
+        @dblclick="open(r)"
+        @contextmenu.prevent="menu(r)"
       >
         <span class="name">{{ r.name }}</span>
         <span v-if="r.ahead || r.behind" class="dim mono">↑{{ r.ahead }} ↓{{ r.behind }}</span>

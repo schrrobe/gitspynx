@@ -1,9 +1,23 @@
-import { app, BrowserWindow, dialog, ipcMain } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu } from 'electron'
 import { type FSWatcher, watch } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { DiffTarget, GitspynxApi, RepoChange } from '../shared/types'
-import { commit, GitError, openRepo, readCommit, readFileDiff, readLog, readStatus, stage, unstage } from './git'
+import type { DiffTarget, GitspynxApi, MenuItem, RepoChange } from '../shared/types'
+import {
+  checkout,
+  commit,
+  createBranch,
+  deleteBranch,
+  GitError,
+  openRepo,
+  readCommit,
+  readFileDiff,
+  readLog,
+  readStatus,
+  renameBranch,
+  stage,
+  unstage
+} from './git'
 
 const recentFile = () => join(app.getPath('userData'), 'recent.json')
 const picked = new Set<string>() // folders the user chose in the dialog this session
@@ -43,6 +57,27 @@ function diffTarget(v: unknown): DiffTarget {
   if (t && typeof t.sha === 'string') return { path: str(t.path), sha: t.sha }
   if (t && typeof t.staged === 'boolean') return { path: str(t.path), staged: t.staged }
   throw new GitError('invalid argument')
+}
+
+function menuItems(v: unknown): MenuItem[] {
+  if (!Array.isArray(v) || v.length > 50) throw new GitError('invalid argument')
+  return v.map((i) => {
+    if (i && i.separator === true) return { separator: true } as const
+    return { id: str(i?.id), label: str(i?.label).slice(0, 200), enabled: i?.enabled !== false }
+  })
+}
+
+function popupMenu(sender: Electron.WebContents, items: MenuItem[]): Promise<string | null> {
+  return new Promise((resolve) => {
+    const menu = Menu.buildFromTemplate(
+      items.map((i) =>
+        'separator' in i ? { type: 'separator' } : { label: i.label, enabled: i.enabled, click: () => resolve(i.id) }
+      )
+    )
+    const window = BrowserWindow.fromWebContents(sender) ?? undefined
+    // The close callback can run before the click handler; resolving null later lets a click win.
+    menu.popup({ window, callback: () => setTimeout(() => resolve(null), 100) })
+  })
 }
 
 // One watched repository at a time; changes are debounced and pushed to the window.
@@ -104,7 +139,24 @@ const handlers: Handlers = {
   stage: (_s, repo, p) => stage(knownRepo(repo), paths(p)),
   unstage: (_s, repo, p) => unstage(knownRepo(repo), paths(p)),
   readFileDiff: (_s, repo, target) => readFileDiff(knownRepo(repo), diffTarget(target)),
-  commit: (_s, repo, message, amend) => commit(knownRepo(repo), str(message), amend === true)
+  commit: (_s, repo, message, amend) => commit(knownRepo(repo), str(message), amend === true),
+  createBranch: (_s, repo, name, start, switchTo) => createBranch(knownRepo(repo), str(name), str(start), switchTo === true),
+  checkout: (_s, repo, branch) => checkout(knownRepo(repo), str(branch)),
+  renameBranch: (_s, repo, from, to) => renameBranch(knownRepo(repo), str(from), str(to)),
+  deleteBranch: (_s, repo, name, force) => deleteBranch(knownRepo(repo), str(name), force === true),
+  showContextMenu: (sender, items) => popupMenu(sender, menuItems(items)),
+  async confirm(sender, message, detail, okLabel) {
+    const window = BrowserWindow.fromWebContents(sender)!
+    const { response } = await dialog.showMessageBox(window, {
+      type: 'warning',
+      message: str(message),
+      detail: typeof detail === 'string' ? detail : '',
+      buttons: [str(okLabel), 'Abbrechen'],
+      defaultId: 1,
+      cancelId: 1
+    })
+    return response === 0
+  }
 }
 
 for (const [name, fn] of Object.entries(handlers)) {

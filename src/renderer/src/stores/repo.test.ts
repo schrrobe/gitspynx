@@ -105,4 +105,48 @@ describe('repo store', () => {
     await repo.stage(['f1'])
     expect(repo.diffTarget).toEqual({ path: 'f1', staged: true })
   })
+
+  describe('deleteBranch', () => {
+    async function openedRepo() {
+      const repo = useRepo()
+      const first = repo.open('/r')
+      await flush()
+      logCalls[0].d.resolve(page('c', 3))
+      await first
+      return repo
+    }
+    function mockApi(confirms: boolean[], unmerged: boolean) {
+      const calls: [string, boolean][] = []
+      const w = (globalThis as unknown as { window: { gitspynx: Record<string, unknown> } }).window
+      w.gitspynx.confirm = async () => confirms.shift() ?? false
+      w.gitspynx.deleteBranch = async (_r: string, name: string, force: boolean) => {
+        calls.push([name, force])
+        if (unmerged && !force) throw new Error("error: the branch 'x' is not fully merged")
+      }
+      w.gitspynx.readLog = async () => page('c', 3)
+      return calls
+    }
+
+    it('does nothing when the first confirmation is cancelled', async () => {
+      const repo = await openedRepo()
+      const calls = mockApi([false], false)
+      await repo.deleteBranch('x')
+      expect(calls).toEqual([])
+    })
+
+    it('asks again and forces when the branch is not fully merged', async () => {
+      const repo = await openedRepo()
+      const calls = mockApi([true, true], true)
+      await repo.deleteBranch('x')
+      expect(calls).toEqual([['x', false], ['x', true]])
+      expect(repo.error).toBeNull()
+    })
+
+    it('keeps the branch when forcing is declined', async () => {
+      const repo = await openedRepo()
+      const calls = mockApi([true, false], true)
+      await repo.deleteBranch('x')
+      expect(calls).toEqual([['x', false]])
+    })
+  })
 })
