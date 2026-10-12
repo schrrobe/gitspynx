@@ -4,3 +4,4 @@ import { ref } from 'vue'
 export const focusSearchRequest = ref(0)
 export const paletteOpen = ref(false)
 export const settingsOpen = ref(false)
+export const terminalOpen = ref(false)

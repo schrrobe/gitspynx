@@ -1,0 +1,85 @@
+import { describe, expect, it } from 'vitest'
+import { createTerminals, type PtyLike } from './terminal'
+
+function fakePty() {
+  const p = {
+    written: [] as string[],
+    size: [80, 24],
+    killed: false,
+    dataCb: (_d: string) => {},
+    exitCb: (_e: { exitCode: number }) => {},
+    onData(cb: (d: string) => void) {
+      p.dataCb = cb
+    },
+    onExit(cb: (e: { exitCode: number }) => void) {
+      p.exitCb = cb
+    },
+    write(d: string) {
+      p.written.push(d)
+    },
+    resize(c: number, r: number) {
+      p.size = [c, r]
+    },
+    kill() {
+      p.killed = true
+    }
+  }
+  return p
+}
+
+function setup() {
+  const ptys: ReturnType<typeof fakePty>[] = []
+  const cwds: string[] = []
+  const events: unknown[][] = []
+  const t = createTerminals(
+    (cwd) => {
+      cwds.push(cwd)
+      const p = fakePty()
+      ptys.push(p)
+      return p as PtyLike
+    },
+    (owner, channel, ...args) => events.push([owner, channel, ...args])
+  )
+  return { t, ptys, cwds, events }
+}
+
+describe('terminals', () => {
+  it('starts a shell in the repository and forwards its output and exit to the owner', () => {
+    const { t, ptys, cwds, events } = setup()
+    const id = t.start(1, '/repo')
+    expect(cwds).toEqual(['/repo'])
+    ptys[0].dataCb('hello')
+    ptys[0].exitCb({ exitCode: 0 })
+    expect(events).toEqual([
+      [1, 'terminal:data', id, 'hello'],
+      [1, 'terminal:exit', id, 0]
+    ])
+  })
+
+  it('only lets the owning window write, resize or kill', () => {
+    const { t, ptys } = setup()
+    const id = t.start(1, '/repo')
+    expect(() => t.write(2, id, 'rm -rf ~\r')).toThrow()
+    expect(() => t.kill(2, id)).toThrow()
+    t.write(1, id, 'ls\r')
+    expect(ptys[0].written).toEqual(['ls\r'])
+  })
+
+  it('clamps sizes to sane values', () => {
+    const { t, ptys } = setup()
+    const id = t.start(1, '/repo')
+    t.resize(1, id, 0, 100000)
+    expect(ptys[0].size).toEqual([2, 1000])
+  })
+
+  it('kills all terminals of a window that goes away and forgets exited ones', () => {
+    const { t, ptys } = setup()
+    t.start(1, '/a')
+    t.start(1, '/b')
+    const other = t.start(2, '/c')
+    t.killAll(1)
+    expect(ptys.map((p) => p.killed)).toEqual([true, true, false])
+    ptys[2].exitCb({ exitCode: 1 })
+    expect(() => t.write(2, other, 'x')).toThrow()
+  })
+})

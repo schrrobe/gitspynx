@@ -2,7 +2,7 @@
 
 Eigenständige Git-Desktop-App (geplant: Electron · TypeScript · Vue 3 · Pinia · Vite).
 
-Aktueller Stand: **M9 + Teile von M10** – Repository öffnen, Commit-Graph, Arbeitsverzeichnis (Stage/Unstage, Diff, Commit/Amend), Branches (anlegen, wechseln, umbenennen, löschen), Fetch/Pull/Push inkl. Upstream und Force-with-lease, Merge/Rebase/Cherry-Pick mit Konflikt-Editor, Stash, Commit-Suche und Branch-Filter (Ausblenden/Solo), Tabs und Workspaces, Einstellungen (Theme, Zoom, Pull-Modus), anpassbare Tastenkürzel und Command Palette (⌘⇧P), Hunk-/Zeilen-Staging, interaktiver Rebase, Undo/Redo, Worktrees und Submodule.
+Aktueller Stand: **M9 + Teile von M10** – Repository öffnen, Commit-Graph, Arbeitsverzeichnis (Stage/Unstage, Diff, Commit/Amend), Branches (anlegen, wechseln, umbenennen, löschen), Fetch/Pull/Push inkl. Upstream und Force-with-lease, Merge/Rebase/Cherry-Pick mit Konflikt-Editor, Stash, Commit-Suche und Branch-Filter (Ausblenden/Solo), Tabs und Workspaces, Einstellungen (Theme, Zoom, Pull-Modus), anpassbare Tastenkürzel und Command Palette (⌘⇧P), Hunk-/Zeilen-Staging, interaktiver Rebase, Undo/Redo, Worktrees, Submodule und integriertes Terminal.
 
 ## Dokumentation
 
@@ -27,11 +27,11 @@ Die Analyse nutzt ausschließlich die lokal installierte Kopie, verändert die I
 ## Entwicklung
 
 ```sh
-npm install
+npm install        # baut auch node-pty (Terminal) gegen Electron; braucht Xcode CLT / build-essential
 npm run dev        # App mit Hot Reload
 npm test           # Vitest (Parser, Git-Backend gegen echte Temp-Repos, Graph-Layout)
 npm run typecheck
 npm run build      # nach out/
 ```
 
-Stand: M0–M9 und aus M10 Hunk-/Zeilen-Staging, interaktiver Rebase, Undo/Redo, Worktrees sowie Submodule aus dem [Implementierungsplan](docs/reverse-engineering/08-implementation-plan.md).
+Stand: M0–M9 und aus M10 Hunk-/Zeilen-Staging, interaktiver Rebase, Undo/Redo, Worktrees, Submodule sowie Terminal aus dem [Implementierungsplan](docs/reverse-engineering/08-implementation-plan.md).

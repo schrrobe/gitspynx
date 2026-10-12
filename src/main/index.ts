@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme } from 'electron'
 import { readFile, writeFile } from 'node:fs/promises'
+import * as pty from 'node-pty'
 import { basename, dirname, join } from 'node:path'
 import { type DiffTarget, type GitspynxApi, type HunkSelection, type RebaseStep, type UndoStep, MAX_LOG_PAGE, type MenuItem, type RepoChange, type Resolution, type Session } from '../shared/types'
 import {
@@ -46,6 +47,7 @@ import {
 } from './git'
 import { parseSettings, type Settings } from '../shared/settings'
 import { jsonFile, latestOnly, sessionFile, withoutWorkspace, withTabs, withWorkspace } from './session'
+import { createTerminals } from './terminal'
 import { type RepoWatcher, watchRepo } from './watch'
 
 const recentFile = () => join(app.getPath('userData'), 'recent.json')
@@ -53,6 +55,16 @@ let sessionStore: ReturnType<typeof sessionFile> | null = null
 const store = () => (sessionStore ??= sessionFile(join(app.getPath('userData'), 'session.json')))
 const loadSession = () => store().load()
 const storeSession = (next: Session) => store().save(next)
+// Login shell so PATH etc. match the user's terminal even when the app was started from the Dock.
+const shell = process.platform === 'win32' ? (process.env.COMSPEC ?? 'powershell.exe') : (process.env.SHELL ?? '/bin/sh')
+const terminals = createTerminals(
+  (cwd) => pty.spawn(shell, process.platform === 'win32' ? [] : ['-l'], { name: 'xterm-256color', cwd, cols: 80, rows: 24, env: process.env as Record<string, string> }),
+  (owner, channel, id, payload) => {
+    const wc = BrowserWindow.getAllWindows().map((w) => w.webContents).find((w) => w.id === owner)
+    if (wc && !wc.isDestroyed()) wc.send(channel, id, payload)
+  }
+)
+const terminalOwners = new Set<number>() // windows whose terminals die with them
 const opens = latestOnly() // overlapping openRepo calls: only the newest re-targets the watcher
 let settingsStore: ReturnType<typeof jsonFile<Settings>> | null = null
 const settings = () => (settingsStore ??= jsonFile(join(app.getPath('userData'), 'settings.json'), parseSettings))
@@ -292,6 +304,20 @@ const handlers: Handlers = {
   },
   removeWorktree: (_s, repo, path, force) => removeWorktree(knownRepo(repo), str(path), force === true),
   pruneWorktrees: (_s, repo) => pruneWorktrees(knownRepo(repo)),
+  terminalStart: async (sender, repo) => {
+    if (!terminalOwners.has(sender.id)) {
+      terminalOwners.add(sender.id)
+      const id = sender.id
+      sender.once('destroyed', () => (terminals.killAll(id), terminalOwners.delete(id)))
+    }
+    return terminals.start(sender.id, knownRepo(repo))
+  },
+  terminalWrite: async (sender, id, data) => {
+    if (typeof data !== 'string' || data.length > 1_000_000) throw new GitError('invalid argument')
+    terminals.write(sender.id, int(id, 1e9), data)
+  },
+  terminalResize: async (sender, id, cols, rows) => terminals.resize(sender.id, int(id, 1e9), int(cols, 100_000), int(rows, 100_000)),
+  terminalKill: async (sender, id) => terminals.kill(sender.id, int(id, 1e9)),
   async updateSubmodules(_s, repo, p) {
     const path = knownRepo(repo)
     if (!Array.isArray(p)) throw new GitError('invalid argument')

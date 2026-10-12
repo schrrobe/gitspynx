@@ -2,7 +2,7 @@ import type { useRepo } from './stores/repo'
 import type { useSettings } from './stores/settings'
 import type { useTabs } from './stores/tabs'
 import { WIP } from './stores/repo'
-import { focusSearchRequest, paletteOpen, settingsOpen } from './ui'
+import { focusSearchRequest, paletteOpen, settingsOpen, terminalOpen } from './ui'
 
 export interface Command {
   id: string
@@ -76,6 +76,7 @@ export function buildCommands({ repo, tabs, settings, pickRepo }: Context): Comm
       enabled: () => idle() && !repo.undoing && !repo.info?.operation && !!repo.redoLabel,
       run: () => repo.redo()
     },
+    { id: 'terminal.toggle', title: 'Terminal ein-/ausblenden', keys: 'Ctrl+`', enabled: open, run: () => (terminalOpen.value = !terminalOpen.value) },
     { id: 'repo.refresh', title: 'Aktualisieren', keys: 'Mod+R', enabled: open, run: () => repo.refresh() },
     { id: 'repo.fetch', title: 'Fetch', keys: 'Mod+L', enabled: idle, run: () => repo.fetchAll() },
     { id: 'repo.pull', title: 'Pull', keys: 'Mod+Shift+L', enabled: idle, run: () => repo.pullBranch(settings.settings.pullMode) },

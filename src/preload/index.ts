@@ -27,6 +27,10 @@ const methods: (keyof GitspynxApi)[] = [
   'removeWorktree',
   'pruneWorktrees',
   'updateSubmodules',
+  'terminalStart',
+  'terminalWrite',
+  'terminalResize',
+  'terminalKill',
   'commit',
   'createBranch',
   'checkout',
@@ -61,6 +65,16 @@ const bridge: GitspynxBridge = {
     const listener = (_e: unknown, change: RepoChange) => cb(change)
     ipcRenderer.on('repo:changed', listener)
     return () => ipcRenderer.off('repo:changed', listener)
+  },
+  onTerminalData(cb) {
+    const listener = (_e: unknown, id: number, data: string) => cb(id, data)
+    ipcRenderer.on('terminal:data', listener)
+    return () => ipcRenderer.off('terminal:data', listener)
+  },
+  onTerminalExit(cb) {
+    const listener = (_e: unknown, id: number, code: number) => cb(id, code)
+    ipcRenderer.on('terminal:exit', listener)
+    return () => ipcRenderer.off('terminal:exit', listener)
   }
 }
 

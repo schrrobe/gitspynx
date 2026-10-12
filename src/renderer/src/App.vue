@@ -6,7 +6,7 @@ import CommitDetail from './components/CommitDetail.vue'
 import SettingsDialog from './components/SettingsDialog.vue'
 import { comboFromEvent, resolveKeymap } from './keymap'
 import { useSettings } from './stores/settings'
-import { settingsOpen } from './ui'
+import { settingsOpen, terminalOpen } from './ui'
 import ConflictView from './components/ConflictView.vue'
 import CommitList from './components/CommitList.vue'
 import DiffView from './components/DiffView.vue'
@@ -15,6 +15,7 @@ import Sidebar from './components/Sidebar.vue'
 import PromptDialog from './components/PromptDialog.vue'
 import RebaseDialog from './components/RebaseDialog.vue'
 import TabStrip from './components/TabStrip.vue'
+import TerminalPanel from './components/TerminalPanel.vue'
 import WorkdirPanel from './components/WorkdirPanel.vue'
 import { ask } from './prompt'
 import { useRepo, WIP } from './stores/repo'
@@ -142,6 +143,7 @@ async function deleteWorkspace(name: string) {
         <button :disabled="!!repo.busy || !repo.status.length" title="Rechtsklick: mit Nachricht" @click="repo.stash()" @contextmenu.prevent="stashWithMessage">Stash</button>
         <button :disabled="!!repo.busy || !repo.info.stashes.length" @click="repo.popLatestStash()">Pop</button>
       </div>
+      <button :class="{ on: terminalOpen }" :aria-pressed="terminalOpen" @click="terminalOpen = !terminalOpen">Terminal</button>
       <button @click="repo.refresh()">Aktualisieren</button>
       <button @click="pick">Öffnen…</button>
       <button @click="closeRepo">Schließen</button>
@@ -155,6 +157,7 @@ async function deleteWorkspace(name: string) {
     <CommitList v-show="!repo.diffTarget && !repo.conflict" :key="repo.info.path" class="list" />
     <WorkdirPanel v-if="repo.selected === WIP" :key="repo.info.path" class="detail" />
     <CommitDetail v-else class="detail" />
+    <TerminalPanel v-if="terminalOpen" />
   </div>
   <PromptDialog />
   <RebaseDialog />
@@ -175,9 +178,10 @@ async function deleteWorkspace(name: string) {
 .welcome .del:hover { color: var(--danger); }
 .error { color: var(--danger); }
 .notice { color: var(--lane-1); }
+button.on { border-color: var(--accent); color: var(--accent); }
 .shell {
   display: grid;
-  grid-template: 'tabs tabs tabs' auto 'bar bar bar' 44px 'op op op' auto 'side list detail' 1fr / 220px 1fr 340px;
+  grid-template: 'tabs tabs tabs' auto 'bar bar bar' 44px 'op op op' auto 'side list detail' 1fr 'term term term' auto / 220px 1fr 340px;
   height: 100%;
 }
 .toolbar {

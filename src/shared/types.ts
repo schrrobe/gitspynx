@@ -102,6 +102,10 @@ export interface GitspynxApi {
   removeWorktree(repo: string, path: string, force: boolean): Promise<void>
   pruneWorktrees(repo: string): Promise<void>
   updateSubmodules(repo: string, paths: string[]): Promise<void> // [] = all
+  terminalStart(repo: string): Promise<number> // login shell in the repository; returns its id
+  terminalWrite(id: number, data: string): Promise<void>
+  terminalResize(id: number, cols: number, rows: number): Promise<void>
+  terminalKill(id: number): Promise<void>
   commit(repo: string, message: string, amend: boolean): Promise<void>
   createBranch(repo: string, name: string, start: string, switchTo: boolean): Promise<void>
   checkout(repo: string, branch: string): Promise<void>
@@ -134,7 +138,11 @@ export interface RepoChange {
   kind: 'status' | 'history'
 }
 
-export type GitspynxBridge = GitspynxApi & { onRepoChanged(cb: (change: RepoChange) => void): () => void }
+export type GitspynxBridge = GitspynxApi & {
+  onRepoChanged(cb: (change: RepoChange) => void): () => void
+  onTerminalData(cb: (id: number, data: string) => void): () => void
+  onTerminalExit(cb: (id: number, exitCode: number) => void): () => void
+}
 
 export interface FileStatus {
   path: string
