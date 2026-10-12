@@ -15,7 +15,7 @@ export const useRepo = defineStore('repo', () => {
   const selected = ref<string | null>(null)
   const detail = ref<CommitDetail | null>(null)
   const status = ref<FileStatus[]>([])
-  const diffTarget = ref<DiffTarget | null>(null)
+  const diffTarget = shallowRef<DiffTarget | null>(null) // shallow: identity is compared to drop stale diffs
   const diff = ref<FileDiff | null>(null)
   // Bumped whenever the loaded history is replaced; results of older requests are dropped.
   let generation = 0
@@ -100,7 +100,13 @@ export const useRepo = defineStore('repo', () => {
     guard(async () => {
       if (!info.value) return
       status.value = await window.gitspynx.readStatus(info.value.path)
-      if (diffTarget.value && !('sha' in diffTarget.value)) await openDiff(diffTarget.value)
+      const t = diffTarget.value
+      if (!t || 'sha' in t) return
+      // A file that moved between staged/unstaged keeps its diff open on the side it is now on.
+      const f = status.value.find((s) => s.path === t.path)
+      const stillThere = f && (t.staged ? f.staged : f.unstaged)
+      const other = f && (t.staged ? f.unstaged : f.staged)
+      await openDiff(!stillThere && other ? { path: t.path, staged: !t.staged } : t)
     })
 
   const openDiff = (target: DiffTarget) =>

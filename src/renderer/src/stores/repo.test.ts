@@ -29,6 +29,7 @@ beforeEach(() => {
     gitspynx: {
       openRepo: async () => info,
       readStatus: async () => [],
+      readFileDiff: async () => ({ binary: false, hunks: [] }),
       readLog: (_repo: string, skip: number) => {
         const d = deferred<Commit[]>()
         logCalls.push({ skip, d })
@@ -79,5 +80,29 @@ describe('repo store', () => {
     logCalls[2].d.resolve(page('new'))
     await reopen
     expect(repo.loading).toBe(false)
+  })
+
+  it('shows the diff for the file that was opened', async () => {
+    const repo = useRepo()
+    const first = repo.open('/r')
+    await flush()
+    logCalls[0].d.resolve(page('c', 3))
+    await first
+    await repo.openDiff({ path: 'f1', staged: false })
+    expect(repo.diff).toEqual({ binary: false, hunks: [] })
+  })
+
+  it('follows an open diff to the staged side when the file gets staged', async () => {
+    const repo = useRepo()
+    const first = repo.open('/r')
+    await flush()
+    logCalls[0].d.resolve(page('c', 3))
+    await first
+    await repo.openDiff({ path: 'f1', staged: false })
+    const w = (globalThis as unknown as { window: { gitspynx: Record<string, unknown> } }).window
+    w.gitspynx.stage = async () => {}
+    w.gitspynx.readStatus = async () => [{ path: 'f1', staged: 'M', unstaged: null, conflicted: false }]
+    await repo.stage(['f1'])
+    expect(repo.diffTarget).toEqual({ path: 'f1', staged: true })
   })
 })

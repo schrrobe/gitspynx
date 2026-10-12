@@ -1,14 +1,24 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import CommitDetail from './components/CommitDetail.vue'
 import CommitList from './components/CommitList.vue'
+import DiffView from './components/DiffView.vue'
 import Sidebar from './components/Sidebar.vue'
-import { useRepo } from './stores/repo'
+import WorkdirPanel from './components/WorkdirPanel.vue'
+import { useRepo, WIP } from './stores/repo'
 
 const repo = useRepo()
 const recent = ref<string[]>([])
 
 onMounted(async () => (recent.value = await window.gitspynx.recentRepos()))
+
+// File changes on disk: refs/HEAD changes reload history, work tree changes only the status.
+const stopWatching = window.gitspynx.onRepoChanged(({ repo: path, git }) => {
+  if (path !== repo.info?.path) return
+  if (git) repo.refresh()
+  else repo.refreshStatus()
+})
+onUnmounted(stopWatching)
 
 async function pick() {
   const path = await window.gitspynx.pickRepo()
@@ -37,13 +47,15 @@ async function pick() {
       <span class="dim">{{ repo.info.head.branch ?? 'detached HEAD' }}</span>
       <span class="spacer" />
       <span v-if="repo.error" class="error" role="alert">{{ repo.error }}</span>
-      <button @click="repo.open(repo.info.path)">Aktualisieren</button>
+      <button @click="repo.refresh()">Aktualisieren</button>
       <button @click="pick">Öffnen…</button>
       <button @click="repo.close()">Schließen</button>
     </header>
     <Sidebar class="sidebar" />
-    <CommitList class="list" />
-    <CommitDetail class="detail" />
+    <DiffView v-if="repo.diffTarget" class="list" />
+    <CommitList v-else class="list" />
+    <WorkdirPanel v-if="repo.selected === WIP" class="detail" />
+    <CommitDetail v-else class="detail" />
   </div>
 </template>
 
@@ -72,5 +84,6 @@ async function pick() {
 .spacer { flex: 1; }
 .sidebar { grid-area: side; }
 .list { grid-area: list; }
-.detail { grid-area: detail; }
+.detail { grid-area: detail; min-height: 0; }
+.list { min-width: 0; min-height: 0; }
 </style>

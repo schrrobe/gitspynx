@@ -28,9 +28,11 @@ const fmt = new Intl.DateTimeFormat(undefined, { dateStyle: 'full', timeStyle: '
       </dl>
       <h3>{{ repo.detail.files.length }} Dateien</h3>
       <ul class="files">
-        <li v-for="f in repo.detail.files" :key="f.path" :title="f.oldPath ? `${f.oldPath} → ${f.path}` : f.path">
-          <span class="status mono" :class="f.status">{{ f.status }}</span>
-          <span class="path">{{ f.path }}</span>
+        <li v-for="f in repo.detail.files" :key="f.path">
+          <button class="file" :title="f.oldPath ? `${f.oldPath} → ${f.path}` : f.path" @click="repo.openDiff({ path: f.path, sha: repo.detail!.sha })">
+            <span class="status mono" :class="f.status">{{ f.status }}</span>
+            <span class="path">{{ f.path }}</span>
+          </button>
         </li>
       </ul>
     </template>
@@ -48,7 +50,8 @@ dt { font-size: 11px; color: var(--text-dim); margin-top: 8px; }
 dd { margin: 0; word-break: break-all; }
 a { color: var(--accent); text-decoration: none; }
 .files { list-style: none; padding: 0; margin: 0; }
-.files li { display: flex; gap: 8px; padding: 2px 0; }
+.file { display: flex; gap: 8px; width: 100%; border: 0; border-radius: 0; background: none; padding: 2px 4px; text-align: left; }
+.file:hover { background: var(--bg-hover); }
 .path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .status { width: 14px; text-align: center; }
 .status.A { color: var(--lane-2); }

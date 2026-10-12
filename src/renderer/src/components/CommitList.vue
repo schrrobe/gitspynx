@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { useRepo } from '../stores/repo'
+import { useRepo, WIP } from '../stores/repo'
 import GraphCell from './GraphCell.vue'
 
 const ROW = 28
@@ -39,6 +39,12 @@ function move(delta: number) {
 </script>
 
 <template>
+  <div class="wrap">
+  <button v-if="repo.status.length" class="wip" :class="{ selected: repo.selected === WIP }" @click="repo.select(WIP)">
+    <span class="wip-dot" aria-hidden="true" />
+    <span>Arbeitsverzeichnis</span>
+    <span class="dim">{{ repo.status.length }} {{ repo.status.length === 1 ? 'Datei' : 'Dateien' }} geändert</span>
+  </button>
   <div
     ref="scroller"
     class="scroller"
@@ -77,10 +83,28 @@ function move(delta: number) {
     </div>
     <p v-if="!repo.commits.length && !repo.loading" class="empty dim">Noch keine Commits.</p>
   </div>
+  </div>
 </template>
 
 <style scoped>
-.scroller { overflow: auto; position: relative; outline: none; }
+.wrap { display: flex; flex-direction: column; }
+.scroller { flex: 1; overflow: auto; position: relative; outline: none; }
+.wip {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 28px;
+  flex: none;
+  border: 0;
+  border-bottom: 1px dashed var(--border);
+  border-radius: 0;
+  background: none;
+  padding: 0 12px 0 8px;
+  text-align: left;
+}
+.wip:hover { background: var(--bg-hover); }
+.wip.selected { background: var(--bg-selected); }
+.wip-dot { width: 10px; height: 10px; border-radius: 50%; border: 2px dashed var(--text-dim); }
 .spacer { position: relative; }
 .row {
   position: absolute;
