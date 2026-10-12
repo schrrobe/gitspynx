@@ -613,4 +613,37 @@ describe('repo store', () => {
       expect(repo.error).toBeNull()
     })
   })
+
+  describe('submodules', () => {
+    const w = () => (globalThis as unknown as { window: { gitspynx: Record<string, unknown> } }).window
+    async function opened(confirm: boolean) {
+      w().gitspynx.openRepo = async () => ({
+        ...info,
+        submodules: [
+          { path: 'a', sha: '1', state: 'modified' },
+          { path: 'b', sha: '2', state: 'ok' }
+        ]
+      })
+      w().gitspynx.readLog = async () => page('c', 3)
+      w().gitspynx.confirm = async () => confirm
+      const calls: string[][] = []
+      w().gitspynx.updateSubmodules = async (_r: string, paths: string[]) => void calls.push(paths)
+      const repo = useRepo()
+      await repo.open('/r')
+      return { repo, calls }
+    }
+
+    it('asks before resetting a submodule that has another commit checked out', async () => {
+      const { repo, calls } = await opened(false)
+      await repo.updateSubmodules(['a'])
+      await repo.updateSubmodules()
+      expect(calls).toEqual([])
+    })
+
+    it('updates without asking when nothing would be reset', async () => {
+      const { repo, calls } = await opened(false)
+      await repo.updateSubmodules(['b'])
+      expect(calls).toEqual([['b']])
+    })
+  })
 })

@@ -601,18 +601,38 @@ export async function pruneWorktrees(repo: string): Promise<void> {
 
 // ---- submodules ----
 
-const SUBMODULE_STATE: Record<string, Submodule['state']> = { ' ': 'ok', '-': 'uninitialized', '+': 'modified', U: 'conflict' }
-
+// From the index (cheap: no per-submodule `git describe` like `submodule status`): gitlinks are
+// mode 160000; initialized = has a .git; modified = checked-out commit differs from the recorded one.
 export async function listSubmodules(repo: string): Promise<Submodule[]> {
-  const { stdout } = await run(['-c', 'core.quotePath=false', 'submodule', 'status'], repo)
-  return stdout
-    .split('\n')
-    .map((line) => /^([ \-+U])([0-9a-f]+) (.+?)(?: \(.*\))?$/.exec(line))
-    .filter((m): m is RegExpExecArray => !!m)
-    .map((m) => ({ path: m[3], sha: m[2], state: SUBMODULE_STATE[m[1]] }))
+  const [index, changed] = await Promise.all([
+    run(['ls-files', '-s', '-z'], repo),
+    run(['diff-files', '--ignore-submodules=dirty', '--name-only', '-z'], repo)
+  ])
+  const modified = new Set(changed.stdout.split('\0'))
+  const byPath = new Map<string, Submodule>()
+  for (const entry of index.stdout.split('\0')) {
+    const m = /^160000 ([0-9a-f]+) (\d)\t(.*)$/s.exec(entry)
+    if (!m) continue
+    const [, sha, stage, path] = m
+    if (stage !== '0') {
+      byPath.set(path, { path, sha, state: 'conflict' })
+      continue
+    }
+    const state = !existsSync(join(repo, path, '.git')) ? 'uninitialized' : modified.has(path) ? 'modified' : 'ok'
+    byPath.set(path, { path, sha, state })
+  }
+  return [...byPath.values()]
 }
 
-// Initializes and updates the given submodules (all when empty), recursively.
+// Given paths: initialize (if needed) and update just those. Empty: update the initialized ones
+// only, so submodules left uninitialized on purpose are not cloned. Paths are passed as
+// :(literal) pathspecs (a global --literal-pathspecs would leak into submodule hooks). No
+// wall-clock limit (an initial clone can take long); HTTP transfers that stall are aborted.
+// ponytail: an SSH transfer that stalls is only stopped by the 30 min backstop
 export async function updateSubmodules(repo: string, paths: string[]): Promise<void> {
-  await run([LITERAL, 'submodule', 'update', '--init', '--recursive', '--', ...paths], repo, [0], undefined, NETWORK_TIMEOUT)
+  const stall = ['-c', 'http.lowSpeedLimit=1000', '-c', 'http.lowSpeedTime=60']
+  const args = paths.length
+    ? [...stall, 'submodule', 'update', '--init', '--recursive', '--', ...paths.map((p) => `:(literal)${p}`)]
+    : [...stall, 'submodule', 'update', '--recursive']
+  await run(args, repo, [0], undefined, 30 * 60_000)
 }

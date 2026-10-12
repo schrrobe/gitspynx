@@ -251,7 +251,8 @@ const handlers: Handlers = {
     const info = await openRepo(await allowedPath(path))
     opened.set(info.path, info.tips)
     for (const t of info.worktrees) picked.add(t.path) // reported by git: may be opened as tabs
-    for (const s of info.submodules) if (s.state !== 'uninitialized') picked.add(join(info.path, s.path))
+    // same string the renderer builds (git paths use "/" on every platform)
+    for (const s of info.submodules) if (s.state !== 'uninitialized') picked.add(`${info.path}/${s.path}`)
     await remember(info.path)
     if (opens.isLatest(request)) await watchOpenRepo(info.path, sender)
     return info

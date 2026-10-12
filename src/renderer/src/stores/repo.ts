@@ -562,8 +562,24 @@ export const useRepo = defineStore('repo', () => {
   }
 
   const pruneWorktrees = () => mutate((r) => window.gitspynx.pruneWorktrees(r))
-  // fetches from the submodules' remotes, so it counts as a network operation
-  const updateSubmodules = (paths: string[] = []) => network('submodules', (r) => window.gitspynx.updateSubmodules(r, paths))
+  // Fetches from the submodules' remotes, so it counts as a network operation. A submodule with
+  // another commit checked out is reset to the recorded one: commits made on its detached HEAD
+  // would end up on no branch, so ask first.
+  async function updateSubmodules(paths: string[] = []) {
+    const subs = info.value?.submodules ?? []
+    const targets = paths.length ? subs.filter((s) => paths.includes(s.path)) : subs.filter((s) => s.state !== 'uninitialized')
+    const resets = targets.filter((s) => s.state === 'modified')
+    if (
+      resets.length &&
+      !(await window.gitspynx.confirm(
+        `${resets.map((s) => s.path).join(', ')} auf den aufgezeichneten Commit zurücksetzen?`,
+        'Das Submodul wird auf den im Repository aufgezeichneten Commit gesetzt. Commits, die dort auf keinem Branch liegen, sind danach nur noch über das Reflog erreichbar.',
+        'Zurücksetzen'
+      ))
+    )
+      return
+    await network('submodules', (r) => window.gitspynx.updateSubmodules(r, paths))
+  }
 
   const close = () => {
     void window.gitspynx.closeRepo()

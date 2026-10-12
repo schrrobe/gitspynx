@@ -1166,6 +1166,42 @@ describe('submodules', () => {
     expect((await listSubmodules(clone))[0].state).toBe('ok')
   })
 
+  it('handles paths with parentheses and gitlinks without a .gitmodules entry', async () => {
+    const lib = join(root, 'lib')
+    at(clone, 'submodule', 'add', '-q', lib, 'odd (x)')
+    const embedded = join(clone, 'embedded')
+    mkdirSync(embedded)
+    at(embedded, 'init', '-q', '-b', 'main')
+    at(embedded, 'commit', '-q', '--allow-empty', '-m', 'e')
+    at(clone, 'add', 'embedded') // a gitlink with no .gitmodules mapping
+    const list = await listSubmodules(clone)
+    expect(list.map((x) => [x.path, x.state]).sort()).toEqual([
+      ['deps/lib', 'ok'],
+      ['embedded', 'ok'],
+      ['odd (x)', 'ok']
+    ])
+    at(clone, 'rm', '-q', '-f', '--cached', 'embedded')
+    rmSync(embedded, { recursive: true, force: true })
+  })
+
+  it('updates all without initializing submodules the user left uninitialized', async () => {
+    const fresh = join(root, 'fresh')
+    at(root, 'clone', '-q', sup, fresh)
+    await updateSubmodules(fresh, [])
+    expect((await listSubmodules(fresh))[0].state).toBe('uninitialized')
+  })
+
+  it('does not hand literal-pathspec mode to submodule hooks', async () => {
+    const sub = join(clone, 'deps', 'lib')
+    const hook = join(clone, '.git', 'modules', 'deps', 'lib', 'hooks', 'post-checkout')
+    const out = join(root, 'hook-env.txt')
+    writeFileSync(hook, `#!/bin/sh\necho "\${GIT_LITERAL_PATHSPECS:-unset}" > '${out}'\n`, { mode: 0o755 })
+    at(sub, 'commit', '-q', '--allow-empty', '-m', 'moves the submodule away from the recorded commit')
+    await updateSubmodules(clone, ['deps/lib']) // checks the recorded commit out again: post-checkout runs
+    rmSync(hook)
+    expect(readFileSync(out, 'utf8').trim()).toBe('unset')
+  })
+
   it('returns no submodules for a repository without any', async () => {
     expect(await listSubmodules(join(root, 'lib'))).toEqual([])
   })
