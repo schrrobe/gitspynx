@@ -5,6 +5,8 @@ import { basename, join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import {
   abortOperation,
+  listSubmodules,
+  updateSubmodules,
   addWorktree,
   listWorktrees,
   pruneWorktrees,
@@ -1108,5 +1110,63 @@ describe('worktrees', () => {
 
   it('reports work trees in the repository info', async () => {
     expect((await openRepo(main)).worktrees.map((t) => t.branch)).toEqual(['main'])
+  })
+})
+
+describe('submodules', () => {
+  let root: string
+  let sup: string
+  let clone: string
+  const at = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, env: { ...process.env } }).toString().trim()
+  const saved: Record<string, string | undefined> = {}
+
+  beforeAll(() => {
+    // git restricts file:// submodules by default; allow it for this local fixture only
+    for (const [k, v] of Object.entries({ GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'protocol.file.allow', GIT_CONFIG_VALUE_0: 'always' })) {
+      saved[k] = process.env[k]
+      process.env[k] = v
+    }
+    root = realpathSync(mkdtempSync(join(tmpdir(), 'gitspynx-sub-')))
+    const lib = join(root, 'lib')
+    mkdirSync(lib)
+    at(lib, 'init', '-q', '-b', 'main')
+    writeFileSync(join(lib, 'lib.txt'), '1\n')
+    at(lib, 'add', '.')
+    at(lib, 'commit', '-q', '-m', 'lib one')
+    sup = join(root, 'super')
+    mkdirSync(sup)
+    at(sup, 'init', '-q', '-b', 'main')
+    at(sup, 'submodule', 'add', '-q', lib, 'deps/lib')
+    at(sup, 'commit', '-q', '-m', 'add submodule')
+    clone = join(root, 'clone')
+    at(root, 'clone', '-q', sup, clone)
+  })
+  afterAll(() => {
+    for (const [k, v] of Object.entries(saved)) (v === undefined ? delete process.env[k] : (process.env[k] = v))
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  it('lists an uninitialized submodule of a fresh clone', async () => {
+    expect(await listSubmodules(clone)).toEqual([{ path: 'deps/lib', sha: at(sup, 'rev-parse', 'HEAD:deps/lib'), state: 'uninitialized' }])
+    expect((await openRepo(clone)).submodules.map((s) => s.state)).toEqual(['uninitialized'])
+  })
+
+  it('initializes and updates submodules', async () => {
+    await updateSubmodules(clone, ['deps/lib'])
+    expect((await listSubmodules(clone))[0].state).toBe('ok')
+    expect(readFileSync(join(clone, 'deps', 'lib', 'lib.txt'), 'utf8')).toBe('1\n')
+  })
+
+  it('reports a submodule checked out at another commit as modified, and updates it back', async () => {
+    const sub = join(clone, 'deps', 'lib')
+    writeFileSync(join(sub, 'lib.txt'), '2\n')
+    at(sub, 'commit', '-q', '-am', 'local lib change')
+    expect((await listSubmodules(clone))[0].state).toBe('modified')
+    await updateSubmodules(clone, [])
+    expect((await listSubmodules(clone))[0].state).toBe('ok')
+  })
+
+  it('returns no submodules for a repository without any', async () => {
+    expect(await listSubmodules(join(root, 'lib'))).toEqual([])
   })
 })

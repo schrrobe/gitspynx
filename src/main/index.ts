@@ -18,6 +18,7 @@ import {
   gitDirsOutside,
   interactiveRebase,
   isRejectedPush,
+  listSubmodules,
   merge,
   openRepo,
   pruneWorktrees,
@@ -40,7 +41,8 @@ import {
   stashApply,
   stashDrop,
   stashPush,
-  unstage
+  unstage,
+  updateSubmodules
 } from './git'
 import { parseSettings, type Settings } from '../shared/settings'
 import { jsonFile, latestOnly, sessionFile, withoutWorkspace, withTabs, withWorkspace } from './session'
@@ -249,6 +251,7 @@ const handlers: Handlers = {
     const info = await openRepo(await allowedPath(path))
     opened.set(info.path, info.tips)
     for (const t of info.worktrees) picked.add(t.path) // reported by git: may be opened as tabs
+    for (const s of info.submodules) if (s.state !== 'uninitialized') picked.add(join(info.path, s.path))
     await remember(info.path)
     if (opens.isLatest(request)) await watchOpenRepo(info.path, sender)
     return info
@@ -288,6 +291,14 @@ const handlers: Handlers = {
   },
   removeWorktree: (_s, repo, path, force) => removeWorktree(knownRepo(repo), str(path), force === true),
   pruneWorktrees: (_s, repo) => pruneWorktrees(knownRepo(repo)),
+  async updateSubmodules(_s, repo, p) {
+    const path = knownRepo(repo)
+    if (!Array.isArray(p)) throw new GitError('invalid argument')
+    const known = new Set((await listSubmodules(path)).map((s) => s.path))
+    const requested = p.map(str)
+    if (requested.some((x) => !known.has(x))) throw new GitError('unknown submodule')
+    await updateSubmodules(path, requested)
+  },
   commit: (_s, repo, message, amend) => commit(knownRepo(repo), str(message), amend === true),
   createBranch: (_s, repo, name, start, switchTo) => createBranch(knownRepo(repo), str(name), str(start), switchTo === true),
   checkout: (_s, repo, branch) => checkout(knownRepo(repo), str(branch)),

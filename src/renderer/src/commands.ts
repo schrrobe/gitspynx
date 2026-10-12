@@ -80,6 +80,12 @@ export function buildCommands({ repo, tabs, settings, pickRepo }: Context): Comm
     { id: 'repo.fetch', title: 'Fetch', keys: 'Mod+L', enabled: idle, run: () => repo.fetchAll() },
     { id: 'repo.pull', title: 'Pull', keys: 'Mod+Shift+L', enabled: idle, run: () => repo.pullBranch(settings.settings.pullMode) },
     { id: 'repo.push', title: 'Push', keys: 'Mod+Shift+K', enabled: idle, run: () => repo.pushBranch() },
+    {
+      id: 'submodules.update',
+      title: 'Alle Submodule initialisieren/aktualisieren',
+      enabled: () => idle() && !!repo.info?.submodules.length,
+      run: () => repo.updateSubmodules()
+    },
     { id: 'repo.stash', title: 'Stash', enabled: () => idle() && repo.status.length > 0, run: () => repo.stash() },
     { id: 'repo.pop', title: 'Stash anwenden und löschen (Pop)', enabled: () => idle() && !!repo.info?.stashes.length, run: () => repo.popLatestStash() },
     {

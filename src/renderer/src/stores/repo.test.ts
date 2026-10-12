@@ -4,7 +4,7 @@ import type { Commit, RepoInfo } from '../../../shared/types'
 import { MAX_LOG_PAGE } from '../../../shared/types'
 import { useRepo, WIP } from './repo'
 
-const info: RepoInfo = { path: '/r', head: { branch: 'main', sha: 'a0' }, refs: [], tips: ['a0'], operation: null, stashes: [], worktrees: [] }
+const info: RepoInfo = { path: '/r', head: { branch: 'main', sha: 'a0' }, refs: [], tips: ['a0'], operation: null, stashes: [], worktrees: [], submodules: [] }
 const page = (prefix: string, n = 2000): Commit[] =>
   Array.from({ length: n }, (_, i) => ({
     sha: `${prefix}${i}`,

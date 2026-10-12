@@ -85,6 +85,21 @@ async function worktreeMenu(t: Worktree) {
   }
 }
 
+const SUB_STATE = { ok: '', uninitialized: 'nicht initialisiert', modified: 'anderer Commit', conflict: 'Konflikt' }
+const subPath = (p: string) => `${repo.info!.path}/${p}`
+
+async function submoduleMenu(path: string, initialized: boolean) {
+  const id = await window.gitspynx.showContextMenu([
+    { id: 'update', label: initialized ? 'Aktualisieren' : 'Initialisieren', enabled: !repo.busy },
+    { id: 'open', label: 'Als Tab öffnen', enabled: initialized },
+    { separator: true },
+    { id: 'all', label: 'Alle Submodule aktualisieren', enabled: !repo.busy }
+  ])
+  if (id === 'update') repo.updateSubmodules([path])
+  else if (id === 'open') tabs.openPath(subPath(path))
+  else if (id === 'all') repo.updateSubmodules()
+}
+
 async function stashMenu(sha: string) {
   repo.select(sha)
   const id = await window.gitspynx.showContextMenu([
@@ -134,6 +149,21 @@ async function stashMenu(sha: string) {
       >
         <span class="name">{{ t.branch ?? 'detached' }}</span>
         <span class="dim">{{ t.main ? 'Haupt' : name(t.path) }}</span>
+      </button>
+    </section>
+    <section v-if="repo.info?.submodules.length">
+      <h3>Submodule <span class="dim">{{ repo.info.submodules.length }}</span></h3>
+      <button
+        v-for="s in repo.info.submodules"
+        :key="s.path"
+        class="item"
+        :class="{ hidden: s.state === 'uninitialized' }"
+        :title="s.state === 'uninitialized' ? `${s.path} – Doppelklick initialisiert` : `${s.path} – Doppelklick öffnet als Tab`"
+        @dblclick="s.state === 'uninitialized' ? repo.updateSubmodules([s.path]) : tabs.openPath(subPath(s.path))"
+        @contextmenu.prevent="submoduleMenu(s.path, s.state !== 'uninitialized')"
+      >
+        <span class="name">{{ s.path }}</span>
+        <span v-if="SUB_STATE[s.state]" class="dim">{{ SUB_STATE[s.state] }}</span>
       </button>
     </section>
     <section v-if="repo.info?.stashes.length">

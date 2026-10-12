@@ -43,6 +43,13 @@ export interface RepoInfo {
   operation: Operation | null // multi-step operation waiting for conflicts to be resolved
   stashes: Commit[] // newest first; subject like "On main: message"
   worktrees: Worktree[] // first = main work tree
+  submodules: Submodule[]
+}
+
+export interface Submodule {
+  path: string // relative to the work tree
+  sha: string // recorded commit (checked-out commit when modified)
+  state: 'ok' | 'uninitialized' | 'modified' | 'conflict'
 }
 
 export interface Worktree {
@@ -94,6 +101,7 @@ export interface GitspynxApi {
   addWorktree(repo: string, branch: string, fromSha: string | null): Promise<string | null>
   removeWorktree(repo: string, path: string, force: boolean): Promise<void>
   pruneWorktrees(repo: string): Promise<void>
+  updateSubmodules(repo: string, paths: string[]): Promise<void> // [] = all
   commit(repo: string, message: string, amend: boolean): Promise<void>
   createBranch(repo: string, name: string, start: string, switchTo: boolean): Promise<void>
   checkout(repo: string, branch: string): Promise<void>

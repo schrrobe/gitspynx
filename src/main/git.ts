@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { lstat, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path'
-import type { Commit, CommitDetail, ConflictVersions, DiffTarget, FileDiff, FileStatus, HunkSelection, Operation, RebaseCommit, RebaseStep, RepoInfo, Resolution, UndoStep, Worktree } from '../shared/types'
+import type { Commit, CommitDetail, ConflictVersions, DiffTarget, FileDiff, FileStatus, HunkSelection, Operation, RebaseCommit, RebaseStep, RepoInfo, Resolution, Submodule, UndoStep, Worktree } from '../shared/types'
 import { hunkKey } from '../shared/hunk'
 import { buildPatch } from './patch'
 import { LOG_FORMAT, parseDiff, parseLog, parseNameStatus, parseRefs, parseStatus, parseWorktrees, REF_FORMAT } from './parse'
@@ -96,8 +96,13 @@ export async function openRepo(dir: string): Promise<RepoInfo> {
   // Stashes are listed separately; their internal index/untracked commits are not history.
   const tips = [...new Set([...(head.sha ? [head.sha] : []), ...refs.filter((r) => r.kind !== 'stash').map((r) => r.target)])]
   // A broken work tree entry must not keep the repository from opening.
-  const [operation, stashes, worktrees] = await Promise.all([currentOperation(path), listStashes(path), listWorktrees(path).catch(() => [])])
-  return { path, head, refs, tips, operation, stashes, worktrees }
+  const [operation, stashes, worktrees, submodules] = await Promise.all([
+    currentOperation(path),
+    listStashes(path),
+    listWorktrees(path).catch(() => []),
+    listSubmodules(path).catch(() => []) // e.g. a broken .gitmodules must not block opening
+  ])
+  return { path, head, refs, tips, operation, stashes, worktrees, submodules }
 }
 
 // Pages over a fixed set of tips so commits made between pages cannot shift the order.
@@ -592,4 +597,22 @@ export async function removeWorktree(repo: string, path: string, force: boolean)
 
 export async function pruneWorktrees(repo: string): Promise<void> {
   await run(['worktree', 'prune'], repo)
+}
+
+// ---- submodules ----
+
+const SUBMODULE_STATE: Record<string, Submodule['state']> = { ' ': 'ok', '-': 'uninitialized', '+': 'modified', U: 'conflict' }
+
+export async function listSubmodules(repo: string): Promise<Submodule[]> {
+  const { stdout } = await run(['-c', 'core.quotePath=false', 'submodule', 'status'], repo)
+  return stdout
+    .split('\n')
+    .map((line) => /^([ \-+U])([0-9a-f]+) (.+?)(?: \(.*\))?$/.exec(line))
+    .filter((m): m is RegExpExecArray => !!m)
+    .map((m) => ({ path: m[3], sha: m[2], state: SUBMODULE_STATE[m[1]] }))
+}
+
+// Initializes and updates the given submodules (all when empty), recursively.
+export async function updateSubmodules(repo: string, paths: string[]): Promise<void> {
+  await run([LITERAL, 'submodule', 'update', '--init', '--recursive', '--', ...paths], repo, [0], undefined, NETWORK_TIMEOUT)
 }

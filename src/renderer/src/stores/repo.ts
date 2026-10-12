@@ -25,7 +25,7 @@ export const useRepo = defineStore('repo', () => {
   const status = ref<FileStatus[]>([])
   const diffTarget = shallowRef<DiffTarget | null>(null) // shallow: identity is compared to drop stale diffs
   const diff = ref<FileDiff | null>(null)
-  type NetworkKind = 'fetch' | 'pull' | 'push'
+  type NetworkKind = 'fetch' | 'pull' | 'push' | 'submodules'
   const busyByPath = shallowRef(new Map<string, NetworkKind>()) // running network operation per repo
   const busy = computed(() => (info.value && busyByPath.value.get(info.value.path)) || null)
   const conflict = shallowRef<{ path: string; versions: ConflictVersions } | null>(null)
@@ -562,6 +562,8 @@ export const useRepo = defineStore('repo', () => {
   }
 
   const pruneWorktrees = () => mutate((r) => window.gitspynx.pruneWorktrees(r))
+  // fetches from the submodules' remotes, so it counts as a network operation
+  const updateSubmodules = (paths: string[] = []) => network('submodules', (r) => window.gitspynx.updateSubmodules(r, paths))
 
   const close = () => {
     void window.gitspynx.closeRepo()
@@ -584,6 +586,6 @@ export const useRepo = defineStore('repo', () => {
     graph, refsBySha, open, refresh, loadMore, select, refreshStatus, openDiff, closeDiff, stage, unstage, commit, close,
     checkoutBranch, createBranch, renameBranch, deleteBranch, busy, fetchAll, pullBranch, pushBranch, deleteRemoteBranch,
     conflict, mergeInto, rebaseOnto, cherryPick, continueOp, skipOp, abortOp, openConflict, resolve,
-    stash, applyStash, popLatestStash, dropStash, stageHunk, addWorktree, removeWorktree, pruneWorktrees, undo, redo, undoLabel, redoLabel, rebasePlan, openRebasePlan, startRebase, hidden, solo, toggleHidden, toggleSolo, resetFilters, loadAll
+    stash, applyStash, popLatestStash, dropStash, stageHunk, addWorktree, removeWorktree, pruneWorktrees, updateSubmodules, undo, redo, undoLabel, redoLabel, rebasePlan, openRebasePlan, startRebase, hidden, solo, toggleHidden, toggleSolo, resetFilters, loadAll
   }
 })

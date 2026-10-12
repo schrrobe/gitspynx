@@ -26,6 +26,7 @@ const methods: (keyof GitspynxApi)[] = [
   'addWorktree',
   'removeWorktree',
   'pruneWorktrees',
+  'updateSubmodules',
   'commit',
   'createBranch',
   'checkout',
