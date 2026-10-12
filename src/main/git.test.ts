@@ -41,6 +41,7 @@ import {
   listStashes,
   unstage
 } from './git'
+import { hunkKey } from '../shared/hunk'
 
 const env = {
   ...process.env,
@@ -736,7 +737,7 @@ describe('hunk and line staging', () => {
     writeFileSync(join(hd, 'f.txt'), lines(30, (i) => (i === 1 ? 'CHANGED 1' : i === 25 ? 'CHANGED 25' : null)))
     const d = await readFileDiff(hd, { path: 'f.txt', staged: false })
     expect(d.hunks).toHaveLength(2)
-    await stageHunk(hd, { path: 'f.txt', staged: false, hunk: 0, hunkHeader: d.hunks[0].header })
+    await stageHunk(hd, { path: 'f.txt', staged: false, hunk: 0, hunkHeader: d.hunks[0].header, hunkLines: hunkKey(d.hunks[0]) })
     expect(h('diff', '--cached')).toContain('+CHANGED 1')
     expect(h('diff', '--cached')).not.toContain('CHANGED 25')
     expect(h('diff')).toContain('+CHANGED 25')
@@ -747,12 +748,12 @@ describe('hunk and line staging', () => {
     writeFileSync(join(hd, 'f.txt'), lines(30, (i) => (i === 10 ? 'line 10\nADD A\nADD B' : null)))
     const d = await readFileDiff(hd, { path: 'f.txt', staged: false })
     const idx = d.hunks[0].lines.findIndex((l) => l.text === 'ADD B')
-    await stageHunk(hd, { path: 'f.txt', staged: false, hunk: 0, hunkHeader: d.hunks[0].header, lines: [idx] })
+    await stageHunk(hd, { path: 'f.txt', staged: false, hunk: 0, hunkHeader: d.hunks[0].header, hunkLines: hunkKey(d.hunks[0]), lines: [idx] })
     expect(h('show', ':f.txt')).toContain('line 10\nADD B\nline 11')
     expect(h('show', ':f.txt')).not.toContain('ADD A')
     const s = await readFileDiff(hd, { path: 'f.txt', staged: true })
     const sIdx = s.hunks[0].lines.findIndex((l) => l.text === 'ADD B')
-    await stageHunk(hd, { path: 'f.txt', staged: true, hunk: 0, hunkHeader: s.hunks[0].header, lines: [sIdx] })
+    await stageHunk(hd, { path: 'f.txt', staged: true, hunk: 0, hunkHeader: s.hunks[0].header, hunkLines: hunkKey(s.hunks[0]), lines: [sIdx] })
     expect(h('diff', '--cached')).toBe('')
     expect(readFileSync(join(hd, 'f.txt'), 'utf8')).toContain('ADD A\nADD B') // work tree untouched
     reset()
@@ -762,14 +763,45 @@ describe('hunk and line staging', () => {
     writeFileSync(join(hd, 'f.txt'), lines(30, (i) => (i === 3 ? 'X' : null)))
     const d = await readFileDiff(hd, { path: 'f.txt', staged: false })
     writeFileSync(join(hd, 'f.txt'), lines(30, (i) => (i === 3 ? 'X' : i === 4 ? 'Y' : null)))
-    await expect(stageHunk(hd, { path: 'f.txt', staged: false, hunk: 0, hunkHeader: d.hunks[0].header + 'x' })).rejects.toThrow(/changed/)
+    await expect(stageHunk(hd, { path: 'f.txt', staged: false, hunk: 0, hunkHeader: d.hunks[0].header + 'x', hunkLines: hunkKey(d.hunks[0]) })).rejects.toThrow(/changed/)
+    reset()
+  })
+
+  it('refuses when lines changed under an unchanged hunk header', async () => {
+    writeFileSync(join(hd, 'f.txt'), lines(30, (i) => (i === 3 ? 'SEEN' : null)))
+    const d = await readFileDiff(hd, { path: 'f.txt', staged: false })
+    writeFileSync(join(hd, 'f.txt'), lines(30, (i) => (i === 3 ? 'UNSEEN' : null)))
+    const sel = { path: 'f.txt', staged: false, hunk: 0, hunkHeader: d.hunks[0].header, hunkLines: hunkKey(d.hunks[0]) }
+    await expect(stageHunk(hd, sel)).rejects.toThrow(/changed/)
+    reset()
+  })
+
+  it('refuses partial staging of added and deleted files with a clear message', async () => {
+    writeFileSync(join(hd, 'new.txt'), 'a\nb\n')
+    h('add', 'new.txt')
+    const n = await readFileDiff(hd, { path: 'new.txt', staged: true })
+    await expect(stageHunk(hd, { path: 'new.txt', staged: true, hunk: 0, hunkHeader: n.hunks[0].header, hunkLines: hunkKey(n.hunks[0]), lines: [0] })).rejects.toThrow(/as a whole/)
+    h('rm', '-q', '--cached', 'new.txt')
+    rmSync(join(hd, 'new.txt'))
+    rmSync(join(hd, 'f.txt'))
+    const del = await readFileDiff(hd, { path: 'f.txt', staged: false })
+    await expect(stageHunk(hd, { path: 'f.txt', staged: false, hunk: 0, hunkHeader: del.hunks[0].header, hunkLines: hunkKey(del.hunks[0]), lines: [0] })).rejects.toThrow(/as a whole/)
+    reset()
+  })
+
+  it('unstages a staged rename completely', async () => {
+    h('mv', 'f.txt', 'g.txt')
+    const d = await readFileDiff(hd, { path: 'g.txt', staged: true })
+    await stageHunk(hd, { path: 'g.txt', staged: true, hunk: 0, hunkHeader: d.hunks[0].header, hunkLines: hunkKey(d.hunks[0]) })
+    expect(h('diff', '--cached', '--name-status')).toBe('')
+    rmSync(join(hd, 'g.txt'))
     reset()
   })
 
   it('refuses line staging for untracked files', async () => {
     writeFileSync(join(hd, 'new.txt'), 'a\nb\n')
     const d = await readFileDiff(hd, { path: 'new.txt', staged: false })
-    await expect(stageHunk(hd, { path: 'new.txt', staged: false, hunk: 0, hunkHeader: d.hunks[0].header, lines: [0] })).rejects.toThrow(/untracked/)
+    await expect(stageHunk(hd, { path: 'new.txt', staged: false, hunk: 0, hunkHeader: d.hunks[0].header, hunkLines: hunkKey(d.hunks[0]), lines: [0] })).rejects.toThrow(/untracked/)
     rmSync(join(hd, 'new.txt'))
   })
 })
@@ -850,6 +882,41 @@ describe('interactive rebase', () => {
     r('switch', '-q', 'main')
     r('merge', '-q', '--no-ff', '-m', 'merge side', 'side')
     await expect(readRebasePlan(rd, base)).rejects.toThrow(/merge/)
+  })
+
+  it('offers the full message (subject and body) for rewording', async () => {
+    r('commit', '-q', '--allow-empty', '-m', 'with body', '-m', 'body line')
+    const plan = await readRebasePlan(rd, base)
+    expect(plan.at(-1)!.message).toBe('with body\n\nbody line')
+  })
+
+  it('applies the plan even when GIT_SEQUENCE_EDITOR is set in the environment', async () => {
+    const saved = process.env.GIT_SEQUENCE_EDITOR
+    process.env.GIT_SEQUENCE_EDITOR = 'true'
+    try {
+      await interactiveRebase(rd, base, [
+        { sha: c1, action: 'pick' },
+        { sha: c2, action: 'drop' },
+        { sha: c3, action: 'pick' }
+      ])
+      expect(subjects()).toEqual(['commit 3', 'commit 1'])
+    } finally {
+      if (saved === undefined) delete process.env.GIT_SEQUENCE_EDITOR
+      else process.env.GIT_SEQUENCE_EDITOR = saved
+    }
+  })
+
+  it('reports a rejected reword and does not drop it on continue', async () => {
+    writeFileSync(join(rd, '.git', 'hooks', 'commit-msg'), '#!/bin/sh\ngrep -q "^ok:" "$1" || { echo "message must start with ok:" >&2; exit 1; }\n', { mode: 0o755 })
+    await expect(interactiveRebase(rd, base, [
+      { sha: c1, action: 'reword', message: 'not ok' },
+      { sha: c2, action: 'pick' },
+      { sha: c3, action: 'pick' }
+    ])).rejects.toThrow(/must start with ok/)
+    expect((await openRepo(rd)).operation).toBe('rebase')
+    await expect(continueOperation(rd)).rejects.toThrow(/must start with ok/) // the reword runs again instead of being skipped
+    await abortOperation(rd)
+    expect(subjects()).toEqual(['commit 3', 'commit 2', 'commit 1'])
   })
 
   it('stops on conflicts like any rebase', async () => {

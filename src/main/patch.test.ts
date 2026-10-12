@@ -57,3 +57,16 @@ describe('buildPatch', () => {
     expect(() => buildPatch(diff, 0, [0, 5], false)).toThrow(/no changed lines/)
   })
 })
+
+describe('buildPatch at end of file without newline', () => {
+  const d = parseDiff(['diff --git a/x b/x', '--- a/x', '+++ b/x', '@@ -1 +1 @@', '-x', '\\ No newline at end of file', '+y', '\\ No newline at end of file', ''].join('\n'))
+
+  it('refuses a selection that would turn the last line into context before other lines', () => {
+    expect(() => buildPatch(d, 0, [1], false)).toThrow(/last line/) // only +y: -x would become context before it
+    expect(() => buildPatch(d, 0, [0], true)).toThrow(/last line/)
+  })
+
+  it('still allows the whole change', () => {
+    expect(() => buildPatch(d, 0, [0, 1], false)).not.toThrow()
+  })
+})

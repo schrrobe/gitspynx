@@ -16,6 +16,10 @@ export function buildPatch(diff: FileDiff, hunkIndex: number, lines: number[] | 
   let oldCount = 0
   let newCount = 0
   let changes = 0
+  // After a line without final newline, nothing more may follow on the same side of the patch;
+  // git would otherwise join the lines (a kept "x" plus a staged "+y" becomes "xy").
+  let oldEnded = false
+  let newEnded = false
   hunk.lines.forEach((l, i) => {
     const picked = !selected || selected.has(i)
     let out: string | null
@@ -26,10 +30,18 @@ export function buildPatch(diff: FileDiff, hunkIndex: number, lines: number[] | 
     } else if ((l.type === '-') !== reverse) out = ` ${l.text}` // forward: kept removal; reverse: kept addition
     else out = null
     if (out === null) return
-    if (out[0] !== '+') oldCount++
-    if (out[0] !== '-') newCount++
+    const onOld = out[0] !== '+'
+    const onNew = out[0] !== '-'
+    if ((onOld && oldEnded) || (onNew && newEnded))
+      throw new Error('the last line of a file without a final newline must be staged together with the lines after it')
+    if (onOld) oldCount++
+    if (onNew) newCount++
     body.push(out)
-    if (l.noEol) body.push(NO_EOL)
+    if (l.noEol) {
+      body.push(NO_EOL)
+      oldEnded ||= onOld
+      newEnded ||= onNew
+    }
   })
   if (!changes) throw new Error('no changed lines selected')
   return [...diff.header, `@@ -${m[1]},${oldCount} +${m[2]},${newCount} @@${m[3]}`, ...body, ''].join('\n')

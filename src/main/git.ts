@@ -2,7 +2,8 @@ import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { lstat, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve, sep } from 'node:path'
-import type { Commit, CommitDetail, ConflictVersions, DiffTarget, FileDiff, FileStatus, HunkSelection, Operation, RebaseStep, RepoInfo, Resolution } from '../shared/types'
+import type { Commit, CommitDetail, ConflictVersions, DiffTarget, FileDiff, FileStatus, HunkSelection, Operation, RebaseCommit, RebaseStep, RepoInfo, Resolution } from '../shared/types'
+import { hunkKey } from '../shared/hunk'
 import { buildPatch } from './patch'
 import { LOG_FORMAT, parseDiff, parseLog, parseNameStatus, parseRefs, parseStatus, REF_FORMAT } from './parse'
 
@@ -21,7 +22,7 @@ const MAX_OUTPUT = 256 * 1024 * 1024
 
 // Runs git without a shell. Exit codes listed in okCodes are returned instead of thrown.
 // A timeout kills git's whole process group (ssh, credential helpers, hooks included).
-export function run(args: string[], cwd: string, okCodes = [0], stdin?: string, timeout = 0): Promise<Result> {
+export function run(args: string[], cwd: string, okCodes = [0], stdin?: string, timeout = 0, env: Record<string, string> = {}): Promise<Result> {
   return new Promise((resolve, reject) => {
     if (!existsSync(cwd)) return reject(new GitError(`folder not found: ${cwd}`))
     const child = spawn('git', ['--no-optional-locks', ...args], {
@@ -29,7 +30,7 @@ export function run(args: string[], cwd: string, okCodes = [0], stdin?: string, 
       detached: timeout > 0 && process.platform !== 'win32', // own process group for the timer
       // English messages for the few checks that match git output; never wait for an editor
       // (continue keeps the prepared message). Hooks inherit only these.
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', LC_MESSAGES: 'C', GIT_EDITOR: 'true' }
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', LC_MESSAGES: 'C', GIT_EDITOR: 'true', ...env }
     })
     const out: Buffer[] = []
     const err: Buffer[] = []
@@ -295,14 +296,15 @@ const hasUnmerged = async (repo: string) => (await run(['ls-files', '-u'], repo)
 
 // Runs a command that may stop on conflicts. 'conflicts' only if this command produced them (or
 // started an operation that now waits); a refusal with conflicts already present is an error.
-async function mayConflict(repo: string, args: string[]): Promise<'ok' | 'conflicts'> {
-  const [unmergedBefore, opBefore] = await Promise.all([hasUnmerged(repo), currentOperation(repo)])
+// A stop for any other reason (a hook rejecting a reworded message, an empty pick) is reported
+// as the error it is; the operation bar then offers continue/skip/abort.
+async function mayConflict(repo: string, args: string[], env: Record<string, string> = {}): Promise<'ok' | 'conflicts'> {
+  const unmergedBefore = await hasUnmerged(repo)
   try {
-    await run(args, repo)
+    await run(args, repo, [0], undefined, 0, env)
     return 'ok'
   } catch (e) {
-    const [unmergedAfter, opAfter] = await Promise.all([hasUnmerged(repo), currentOperation(repo)])
-    if ((unmergedAfter && !unmergedBefore) || (opAfter && !opBefore)) return 'conflicts'
+    if (!unmergedBefore && (await hasUnmerged(repo))) return 'conflicts'
     throw e
   }
 }
@@ -336,7 +338,10 @@ export async function continueOperation(repo: string): Promise<'ok' | 'conflicts
   // A step whose resolution matches HEAD leaves nothing to commit: skip it like git suggests, but
   // only if index and work tree both equal HEAD — `rebase --skip` resets the work tree.
   const cleanAtHead = (await run(['diff', '--quiet', 'HEAD'], repo, [0, 1])).code === 0
-  if (cleanAtHead && !(await hasUnmerged(repo))) return mayConflict(repo, [op, '--skip'])
+  // Only a stopped pick can be skipped; a failed exec step (rescheduled) must run again instead.
+  const stoppedOn = { rebase: 'REBASE_HEAD', 'cherry-pick': 'CHERRY_PICK_HEAD', revert: 'REVERT_HEAD' }[op]
+  const stoppedPick = (await run(['rev-parse', '-q', '--verify', stoppedOn], repo, [0, 1])).code === 0
+  if (cleanAtHead && stoppedPick && !(await hasUnmerged(repo))) return mayConflict(repo, [op, '--skip'])
   return mayConflict(repo, [op, '--continue'])
 }
 
@@ -431,8 +436,19 @@ export async function stashDrop(repo: string, sha: string): Promise<void> {
 export async function stageHunk(repo: string, sel: HunkSelection): Promise<void> {
   if (!sel.staged && !(await run([LITERAL, 'ls-files', '--', sel.path], repo)).stdout)
     throw new GitError('untracked files can only be staged as a whole')
+  if (sel.staged) {
+    // A staged rename is a deletion plus an addition; unstaging only the new path would leave the
+    // deletion staged.
+    const renamed = (await readStatus(repo)).find((f) => f.path === sel.path && f.oldPath)
+    if (renamed && sel.lines) throw new GitError('renamed files can only be unstaged as a whole')
+    if (renamed) return unstage(repo, [renamed.path, renamed.oldPath!])
+  }
   const diff = await readFileDiff(repo, { path: sel.path, staged: sel.staged })
-  if (diff.hunks[sel.hunk]?.header !== sel.hunkHeader) throw new GitError('the diff changed meanwhile — please review it again')
+  const hunk = diff.hunks[sel.hunk]
+  if (!hunk || hunk.header !== sel.hunkHeader || hunkKey(hunk) !== sel.hunkLines)
+    throw new GitError('the diff changed meanwhile — please review it again')
+  if (sel.lines && diff.header.some((h) => /^(new|deleted) file mode/.test(h)))
+    throw new GitError('added or deleted files can only be staged as a whole')
   let patch: string
   try {
     patch = buildPatch(diff, sel.hunk, sel.lines, sel.staged)
@@ -444,13 +460,16 @@ export async function stageHunk(repo: string, sel: HunkSelection): Promise<void>
 
 // ---- interactive rebase ----
 
-export async function readRebasePlan(repo: string, base: string): Promise<Commit[]> {
+export async function readRebasePlan(repo: string, base: string): Promise<RebaseCommit[]> {
   assertRevision(base)
   if ((await run(['merge-base', '--is-ancestor', base, 'HEAD'], repo, [0, 1])).code !== 0)
     throw new GitError('the selected commit is not an ancestor of HEAD')
   if ((await run(['rev-list', '--merges', `${base}..HEAD`], repo)).stdout.trim())
     throw new GitError('the range contains merge commits; rebasing merges interactively is not supported')
-  return parseLog((await run(['log', '-z', '--reverse', `--format=${LOG_FORMAT}`, `${base}..HEAD`], repo)).stdout)
+  const f = (await run(['log', '-z', '--reverse', '--format=%H%x00%s%x00%B', `${base}..HEAD`], repo)).stdout.split('\0')
+  const commits: RebaseCommit[] = []
+  for (let i = 0; i + 3 <= f.length; i += 3) commits.push({ sha: f[i], subject: f[i + 1], message: f[i + 2].trimEnd() })
+  return commits
 }
 
 const shellQuote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`
@@ -485,5 +504,7 @@ export async function interactiveRebase(repo: string, base: string, steps: Rebas
   }
   const todoFile = join(dir, 'todo')
   await writeFile(todoFile, todo.join('\n') + '\n')
-  return mayConflict(repo, ['-c', `sequence.editor=cp ${shellQuote(todoFile)}`, 'rebase', '-i', base])
+  // GIT_SEQUENCE_EDITOR (env) wins over any configured or inherited editor; a failed exec
+  // (e.g. a commit-msg hook rejecting the new message) is rescheduled instead of lost.
+  return mayConflict(repo, ['rebase', '-i', '--reschedule-failed-exec', base], { GIT_SEQUENCE_EDITOR: `cp ${shellQuote(todoFile)}` })
 }

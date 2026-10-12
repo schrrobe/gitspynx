@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref, shallowRef } from 'vue'
-import { type Commit, type CommitDetail, type ConflictVersions, type DiffTarget, type FileDiff, type FileStatus, type HunkSelection, MAX_LOG_PAGE, type RebaseStep, type RepoInfo, type Resolution } from '../../../shared/types'
+import { type Commit, type CommitDetail, type ConflictVersions, type DiffTarget, type FileDiff, type FileStatus, type HunkSelection, MAX_LOG_PAGE, type RebaseCommit, type RebaseStep, type RepoInfo, type Resolution } from '../../../shared/types'
 import { layoutGraph } from '../graph/layout'
 import { ask } from '../prompt'
 
@@ -29,7 +29,7 @@ export const useRepo = defineStore('repo', () => {
   const busyByPath = shallowRef(new Map<string, NetworkKind>()) // running network operation per repo
   const busy = computed(() => (info.value && busyByPath.value.get(info.value.path)) || null)
   const conflict = shallowRef<{ path: string; versions: ConflictVersions } | null>(null)
-  const rebasePlan = shallowRef<{ base: string; commits: Commit[] } | null>(null) // open interactive-rebase dialog
+  const rebasePlan = shallowRef<{ base: string; commits: RebaseCommit[] } | null>(null) // open interactive-rebase dialog
   const hidden = shallowRef(new Set<string>()) // fullNames of refs whose history is hidden
   const solo = ref<string | null>(null) // fullName of the only ref shown
   // Bumped whenever the loaded history is replaced; results of older requests are dropped.

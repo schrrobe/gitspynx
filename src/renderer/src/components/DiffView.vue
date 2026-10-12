@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { hunkKey } from '../../../shared/hunk'
 import { keepSelection, type LineSelection } from '../diffSelection'
 import { useRepo } from '../stores/repo'
 
@@ -27,13 +28,20 @@ const stageable = computed(() => {
   if (!t || 'sha' in t || repo.diff?.binary) return false
   return repo.status.find((f) => f.path === t.path)?.unstaged !== '?'
 })
+// Added, deleted and renamed files are staged as a whole (no line selection).
+const lineSelectable = computed(() => {
+  const t = repo.diffTarget
+  if (!stageable.value || !t || 'sha' in t) return false
+  if (repo.diff?.header.some((h) => /^(new|deleted) file mode/.test(h))) return false
+  return !(t.staged && repo.status.find((f) => f.path === t.path)?.oldPath)
+})
 const staged = computed(() => !!repo.diffTarget && !('sha' in repo.diffTarget) && repo.diffTarget.staged)
 const selection = ref<LineSelection | null>(null)
 let anchor = -1
 watch(() => repo.diff, (next, prev) => (selection.value = keepSelection(selection.value, prev, next)))
 
 function toggleLine(hunk: number, line: number, type: string, range: boolean) {
-  if (!stageable.value || type === ' ') return
+  if (!lineSelectable.value || type === ' ') return
   const current = selection.value?.hunk === hunk ? new Set(selection.value.lines) : new Set<number>()
   if (range && anchor !== -1 && selection.value?.hunk === hunk) {
     const lines = repo.diff!.hunks[hunk].lines
@@ -44,9 +52,9 @@ function toggleLine(hunk: number, line: number, type: string, range: boolean) {
 }
 
 function stageHunk(hunk: number, onlySelected: boolean) {
-  const header = repo.diff!.hunks[hunk].header
+  const h = repo.diff!.hunks[hunk]
   const lines = onlySelected && selection.value?.hunk === hunk ? [...selection.value.lines] : undefined
-  repo.stageHunk({ hunk, hunkHeader: header, lines })
+  repo.stageHunk({ hunk, hunkHeader: h.header, hunkLines: hunkKey(h), lines })
 }
 
 // Esc closes the diff unless it belongs to a dialog or a text field.
@@ -83,7 +91,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
           v-for="(l, j) in h.lines"
           :key="j"
           class="line"
-          :class="{ add: l.type === '+', del: l.type === '-', pickable: stageable && l.type !== ' ', picked: selection?.hunk === i && selection.lines.has(j) }"
+          :class="{ add: l.type === '+', del: l.type === '-', pickable: lineSelectable && l.type !== ' ', picked: selection?.hunk === i && selection.lines.has(j) }"
           @click="toggleLine(i, j, l.type, $event.shiftKey)"
         >
           <span class="no">{{ l.oldNo ?? '' }}</span>

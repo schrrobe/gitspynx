@@ -20,7 +20,7 @@ watch(
   () => repo.rebasePlan,
   (plan) => {
     if (!plan) return dialog.value?.close()
-    rows.value = [...plan.commits].reverse().map((c) => ({ sha: c.sha, subject: c.subject, action: 'pick', message: c.subject }))
+    rows.value = [...plan.commits].reverse().map((c) => ({ sha: c.sha, subject: c.subject, action: 'pick', message: c.message }))
     dialog.value?.showModal()
   }
 )
@@ -71,7 +71,7 @@ function cancel() {
           <option v-for="a in ACTIONS" :key="a.value" :value="a.value">{{ a.label }}</option>
         </select>
         <div class="text">
-          <input v-if="r.action === 'reword'" v-model="r.message" :aria-label="`Neue Nachricht für ${r.subject}`" />
+          <textarea v-if="r.action === 'reword'" v-model="r.message" rows="3" :aria-label="`Neue Nachricht für ${r.subject}`" />
           <span v-else class="subject">{{ r.subject }}</span>
           <span class="sha mono dim">{{ r.sha.slice(0, 7) }}</span>
         </div>
@@ -105,7 +105,7 @@ li { display: flex; align-items: center; gap: 8px; padding: 4px 0; border-bottom
 li.dropped .subject { text-decoration: line-through; opacity: 0.5; }
 .order { display: flex; gap: 2px; }
 .order button { padding: 0 6px; }
-select, input {
+select, textarea {
   font: inherit;
   color: var(--text);
   background: var(--bg);
@@ -115,7 +115,7 @@ select, input {
 }
 select { width: 190px; }
 .text { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; }
-.text input { flex: 1; }
+.text textarea { flex: 1; resize: vertical; font-family: inherit; }
 .subject { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .warn { color: var(--danger); font-size: 12px; }
 footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }

@@ -103,10 +103,11 @@ function diffTarget(v: unknown): DiffTarget {
 
 function hunkSelection(v: unknown): HunkSelection {
   const h = v as Record<string, unknown> | null
-  if (!h || typeof h.staged !== 'boolean' || typeof h.hunkHeader !== 'string') throw new GitError('invalid argument')
+  if (!h || typeof h.staged !== 'boolean' || typeof h.hunkHeader !== 'string' || typeof h.hunkLines !== 'string')
+    throw new GitError('invalid argument')
   const lines = h.lines === undefined ? undefined : Array.isArray(h.lines) ? h.lines.map((n) => int(n, 1_000_000)) : null
   if (lines === null) throw new GitError('invalid argument')
-  return { path: str(h.path), staged: h.staged, hunk: int(h.hunk, 100_000), hunkHeader: h.hunkHeader, lines }
+  return { path: str(h.path), staged: h.staged, hunk: int(h.hunk, 100_000), hunkHeader: h.hunkHeader, hunkLines: h.hunkLines, lines }
 }
 
 const ACTIONS = ['pick', 'reword', 'squash', 'fixup', 'drop'] as const
