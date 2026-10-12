@@ -1,0 +1,87 @@
+// Key combos as strings like "Mod+Shift+P". Mod = Cmd on macOS, Ctrl elsewhere; on macOS Ctrl is
+// its own modifier (Ctrl+Tab), elsewhere it is the same as Mod.
+
+export const isMac = typeof navigator !== 'undefined' && /Mac/.test(navigator.platform)
+
+const MODIFIER_KEYS = new Set(['Shift', 'Control', 'Alt', 'Meta'])
+const NAMED: Record<string, string> = {
+  enter: 'Enter', return: 'Enter', tab: 'Tab', esc: 'Escape', escape: 'Escape', space: 'Space', backspace: 'Backspace',
+  delete: 'Delete', del: 'Delete', up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight',
+  arrowup: 'ArrowUp', arrowdown: 'ArrowDown', arrowleft: 'ArrowLeft', arrowright: 'ArrowRight', home: 'Home', end: 'End',
+  pageup: 'PageUp', pagedown: 'PageDown'
+}
+
+function keyName(key: string): string | null {
+  if (key === ' ') return 'Space'
+  if (key.length === 1) return key.toUpperCase()
+  const named = NAMED[key.toLowerCase()]
+  if (named) return named
+  return /^F([1-9]|1[0-2])$/i.test(key) ? key.toUpperCase() : null
+}
+
+const combo = (mods: { mod: boolean; ctrl: boolean; alt: boolean; shift: boolean }, key: string) =>
+  [mods.mod && 'Mod', mods.ctrl && 'Ctrl', mods.alt && 'Alt', mods.shift && 'Shift', key].filter(Boolean).join('+')
+
+interface KeyLike {
+  key: string
+  metaKey: boolean
+  ctrlKey: boolean
+  shiftKey: boolean
+  altKey: boolean
+}
+
+export function comboFromEvent(e: KeyLike, mac = isMac): string | null {
+  if (MODIFIER_KEYS.has(e.key)) return null
+  const key = keyName(e.key)
+  if (!key) return null
+  return combo({ mod: mac ? e.metaKey : e.ctrlKey, ctrl: mac && e.ctrlKey, alt: e.altKey, shift: e.shiftKey }, key)
+}
+
+// Parses what a user typed ("shift+cmd+p") into the canonical form, or null if invalid.
+export function normalizeCombo(text: string, mac = isMac): string | null {
+  const parts = text.split('+').map((p) => p.trim())
+  const keyPart = parts.pop()
+  if (!keyPart) return null
+  const mods = { mod: false, ctrl: false, alt: false, shift: false }
+  for (const p of parts.map((x) => x.toLowerCase())) {
+    if (['mod', 'cmd', 'command', 'meta'].includes(p)) mods.mod = true
+    else if (['ctrl', 'control'].includes(p)) mac ? (mods.ctrl = true) : (mods.mod = true)
+    else if (['alt', 'option', 'opt'].includes(p)) mods.alt = true
+    else if (p === 'shift') mods.shift = true
+    else return null
+  }
+  const key = keyName(keyPart)
+  return key ? combo(mods, key) : null
+}
+
+// Display form, e.g. "⌘⇧P" on macOS, "Ctrl+Shift+P" elsewhere.
+export function displayCombo(c: string, mac = isMac): string {
+  if (!mac) return c.replace('Mod', 'Ctrl')
+  return c
+    .split('+')
+    .map((p) => ({ Mod: '⌘', Ctrl: '⌃', Alt: '⌥', Shift: '⇧', Enter: '↩', Escape: 'Esc' })[p] ?? p)
+    .join('')
+}
+
+// Effective shortcuts: a command's default combo unless the user overrode it ("" removes it).
+// The first command claiming a combo wins; later claims are reported as conflicts.
+export function resolveKeymap(commands: { id: string; keys?: string }[], overrides: Record<string, string>, mac = isMac) {
+  const byCombo = new Map<string, string>()
+  const byCommand = new Map<string, string>()
+  const claims = new Map<string, string[]>()
+  const invalid: string[] = []
+  for (const c of commands) {
+    const raw = c.id in overrides ? overrides[c.id] : c.keys
+    if (!raw) continue
+    const combo = normalizeCombo(raw, mac)
+    if (!combo) {
+      invalid.push(c.id)
+      continue
+    }
+    claims.set(combo, [...(claims.get(combo) ?? []), c.id])
+    if (!byCombo.has(combo)) byCombo.set(combo, c.id)
+    byCommand.set(c.id, combo)
+  }
+  const conflicts = [...claims].filter(([, ids]) => ids.length > 1)
+  return { byCombo, byCommand, conflicts, invalid }
+}

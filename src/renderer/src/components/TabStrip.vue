@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted } from 'vue'
 import { ask } from '../prompt'
 import { useTabs } from '../stores/tabs'
 
@@ -11,16 +10,6 @@ async function saveWorkspace() {
   const n = await ask('Offene Tabs als Workspace speichern', '', 'Speichern')
   if (n) await tabs.saveWorkspace(n)
 }
-
-// Ctrl+Tab / Ctrl+Shift+Tab cycle through tabs
-const onKey = (e: KeyboardEvent) => {
-  if (!e.ctrlKey || e.key !== 'Tab' || tabs.tabs.length < 2) return
-  e.preventDefault()
-  const n = tabs.tabs.length
-  tabs.activate((tabs.active + (e.shiftKey ? n - 1 : 1)) % n)
-}
-onMounted(() => window.addEventListener('keydown', onKey))
-onUnmounted(() => window.removeEventListener('keydown', onKey))
 </script>
 
 <template>

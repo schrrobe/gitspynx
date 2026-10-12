@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme } from 'electron'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { type DiffTarget, type GitspynxApi, MAX_LOG_PAGE, type MenuItem, type RepoChange, type Resolution, type Session } from '../shared/types'
@@ -34,7 +34,8 @@ import {
   stashPush,
   unstage
 } from './git'
-import { latestOnly, sessionFile, withoutWorkspace, withTabs, withWorkspace } from './session'
+import { parseSettings, type Settings } from '../shared/settings'
+import { jsonFile, latestOnly, sessionFile, withoutWorkspace, withTabs, withWorkspace } from './session'
 import { type RepoWatcher, watchRepo } from './watch'
 
 const recentFile = () => join(app.getPath('userData'), 'recent.json')
@@ -43,6 +44,14 @@ const store = () => (sessionStore ??= sessionFile(join(app.getPath('userData'), 
 const loadSession = () => store().load()
 const storeSession = (next: Session) => store().save(next)
 const opens = latestOnly() // overlapping openRepo calls: only the newest re-targets the watcher
+let settingsStore: ReturnType<typeof jsonFile<Settings>> | null = null
+const settings = () => (settingsStore ??= jsonFile(join(app.getPath('userData'), 'settings.json'), parseSettings))
+
+// Theme also drives native menus and dialogs; zoom applies to every window.
+function applySettings(s: Settings) {
+  nativeTheme.themeSource = s.theme
+  for (const w of BrowserWindow.getAllWindows()) w.webContents.setZoomFactor(s.zoom)
+}
 
 // Paths a session may contain: repos opened this run, or already stored in the session.
 async function knownToSession(): Promise<(path: string) => boolean> {
@@ -164,6 +173,13 @@ const handlers: Handlers = {
     unwatch()
   },
   getSession: () => loadSession(),
+  getSettings: () => settings().load(),
+  async saveSettings(_s, raw) {
+    const next = parseSettings(raw)
+    await settings().save(next)
+    applySettings(next)
+    return next
+  },
   async saveTabs(_s, tabs, active) {
     if (!Array.isArray(tabs)) throw new GitError('invalid argument')
     await storeSession(withTabs(await loadSession(), tabs.map(str), int(active, 1000), await knownToSession()))
@@ -265,12 +281,28 @@ function createWindow() {
     }
   })
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  win.webContents.on('did-finish-load', async () => applySettings(await settings().load()))
   win.webContents.on('will-navigate', (e) => e.preventDefault())
   if (process.env.ELECTRON_RENDERER_URL) win.loadURL(process.env.ELECTRON_RENDERER_URL)
   else win.loadFile(join(__dirname, '../renderer/index.html'))
 }
 
+// Own menu: no Close Window on Cmd+W (closes a tab instead) and no built-in zoom/reload
+// accelerators; those are app commands with configurable shortcuts.
+function setMenu() {
+  const mac = process.platform === 'darwin'
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate([
+      ...(mac ? [{ role: 'appMenu' as const }] : []),
+      { role: 'editMenu' },
+      { label: 'Ansicht', submenu: [{ role: 'toggleDevTools' }, { role: 'togglefullscreen' }] },
+      { label: 'Fenster', submenu: [{ role: 'minimize' }, { role: 'zoom' }, ...(mac ? [{ type: 'separator' as const }, { role: 'front' as const }] : [{ role: 'quit' as const }])] }
+    ])
+  )
+}
+
 app.whenReady().then(() => {
+  setMenu()
   createWindow()
   app.on('activate', () => BrowserWindow.getAllWindows().length === 0 && createWindow())
 })

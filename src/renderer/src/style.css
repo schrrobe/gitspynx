@@ -22,8 +22,20 @@
   color-scheme: dark;
 }
 
+/* light: chosen explicitly, or following the system unless dark was chosen */
+:root[data-theme='light'] {
+  --bg: #ffffff;
+  --bg-panel: #f5f6f8;
+  --bg-hover: #eceef2;
+  --bg-selected: #dbe7fb;
+  --border: #dfe2e7;
+  --text: #1f2329;
+  --text-dim: #697180;
+  color-scheme: light;
+}
+
 @media (prefers-color-scheme: light) {
-  :root {
+  :root:not([data-theme='dark']) {
     --bg: #ffffff;
     --bg-panel: #f5f6f8;
     --bg-hover: #eceef2;

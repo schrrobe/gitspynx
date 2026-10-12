@@ -1,6 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { buildCommands } from './commands'
+import CommandPalette from './components/CommandPalette.vue'
 import CommitDetail from './components/CommitDetail.vue'
+import SettingsDialog from './components/SettingsDialog.vue'
+import { comboFromEvent, resolveKeymap } from './keymap'
+import { useSettings } from './stores/settings'
+import { settingsOpen } from './ui'
 import ConflictView from './components/ConflictView.vue'
 import CommitList from './components/CommitList.vue'
 import DiffView from './components/DiffView.vue'
@@ -15,12 +21,32 @@ import { useTabs } from './stores/tabs'
 
 const repo = useRepo()
 const tabs = useTabs()
+const settings = useSettings()
 const recent = ref<string[]>([])
 
 onMounted(async () => {
+  await settings.load()
   recent.value = await window.gitspynx.recentRepos()
   await tabs.restore()
 })
+
+// Shortcuts: one window-level dispatcher over the command list and the (customizable) keymap.
+const commands = buildCommands({ repo, tabs, settings, pickRepo: () => pick() })
+const keymap = computed(() => resolveKeymap(commands, settings.settings.keymap))
+
+function onKey(e: KeyboardEvent) {
+  if (e.defaultPrevented || document.querySelector('dialog[open]')) return // dialogs handle their own keys
+  const combo = comboFromEvent(e)
+  if (!combo) return
+  const typing = (e.target as HTMLElement | null)?.closest?.('input, textarea, select')
+  if (typing && !/^(Mod|Ctrl)\+/.test(combo)) return // plain keys belong to the text field
+  const command = commands.find((c) => c.id === keymap.value.byCombo.get(combo))
+  if (!command || command.enabled?.() === false) return
+  e.preventDefault()
+  command.run()
+}
+onMounted(() => window.addEventListener('keydown', onKey))
+onUnmounted(() => window.removeEventListener('keydown', onKey))
 
 // File changes on disk: refs/HEAD changes reload history, work tree/index changes only the status.
 const stopWatching = window.gitspynx.onRepoChanged(({ repo: path, kind }) => {
@@ -66,7 +92,10 @@ async function deleteWorkspace(name: string) {
   <TabStrip v-if="!repo.info && tabs.tabs.length" class="welcome-tabs" @add="pick" />
   <div v-if="!repo.info" class="welcome">
     <h1>gitspynx</h1>
-    <button :disabled="repo.loading" @click="pick">Repository öffnen…</button>
+    <div class="actions">
+      <button :disabled="repo.loading" @click="pick">Repository öffnen…</button>
+      <button @click="settingsOpen = true">Einstellungen</button>
+    </div>
     <p v-if="repo.error" class="error" role="alert">{{ repo.error }}</p>
     <section v-if="tabs.workspaces.length">
       <h2 class="dim">Workspaces</h2>
@@ -98,7 +127,7 @@ async function deleteWorkspace(name: string) {
       <span v-else-if="repo.notice" class="notice" role="status">{{ repo.notice }}</span>
       <div class="group" role="group" aria-label="Remote">
         <button :disabled="!!repo.busy" @click="repo.fetchAll()">{{ repo.busy === 'fetch' ? 'Fetch…' : 'Fetch' }}</button>
-        <button :disabled="!!repo.busy || !repo.info.head.branch" title="Rechtsklick: Pull-Modus wählen" @click="repo.pullBranch()" @contextmenu.prevent="pullMenu">
+        <button :disabled="!!repo.busy || !repo.info.head.branch" title="Rechtsklick: Pull-Modus wählen" @click="repo.pullBranch(settings.settings.pullMode)" @contextmenu.prevent="pullMenu">
           {{ repo.busy === 'pull' ? 'Pull…' : 'Pull' }}<span v-if="headRef?.behind" class="count"> ↓{{ headRef.behind }}</span>
         </button>
         <button :disabled="!!repo.busy || !repo.info.head.branch" @click="repo.pushBranch()">
@@ -112,6 +141,7 @@ async function deleteWorkspace(name: string) {
       <button @click="repo.refresh()">Aktualisieren</button>
       <button @click="pick">Öffnen…</button>
       <button @click="closeRepo">Schließen</button>
+      <button aria-label="Einstellungen" title="Einstellungen" @click="settingsOpen = true">⚙</button>
     </header>
     <OperationBar />
     <Sidebar class="sidebar" />
@@ -123,11 +153,14 @@ async function deleteWorkspace(name: string) {
     <CommitDetail v-else class="detail" />
   </div>
   <PromptDialog />
+  <CommandPalette :commands="commands" :shortcuts="keymap.byCommand" />
+  <SettingsDialog :commands="commands" />
 </template>
 
 <style scoped>
 .welcome { max-width: 560px; margin: 0 auto; padding: 15vh 16px 0; }
 .welcome h1 { font-weight: 600; letter-spacing: -0.02em; }
+.welcome .actions { display: flex; gap: 8px; }
 .welcome h2 { font-size: 12px; text-transform: uppercase; margin-top: 32px; }
 .welcome ul { list-style: none; padding: 0; }
 .welcome li { padding: 4px 0; }

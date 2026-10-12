@@ -32,20 +32,21 @@ export function withWorkspace(s: Session, name: string, repos: string[], allowed
 
 export const withoutWorkspace = (s: Session, name: string): Session => ({ ...s, workspaces: s.workspaces.filter((w) => w.name !== name) })
 
-// session.json on disk: one cached load, writes serialized and atomic (temp file + rename), so
-// overlapping saves can neither interleave into invalid JSON nor let an older state win.
-export function sessionFile(file: string) {
-  let loaded: Promise<Session> | null = null
-  let latest: Session | null = null
+// A JSON file in userData: one cached load (parse() turns anything into a valid value), writes
+// serialized and atomic (temp file + rename), so overlapping saves can neither interleave into
+// invalid JSON nor let an older state win.
+export function jsonFile<T>(file: string, parse: (raw: unknown) => T) {
+  let loaded: Promise<T> | null = null
+  let latest: T
   let writing: Promise<void> = Promise.resolve()
   return {
-    load(): Promise<Session> {
-      loaded ??= readFile(file, 'utf8').then((t) => parseSession(JSON.parse(t)), () => emptySession())
+    load(): Promise<T> {
+      loaded ??= readFile(file, 'utf8').then((t) => parse(JSON.parse(t)), () => parse(null))
       return loaded
     },
-    save(s: Session): Promise<void> {
-      latest = s
-      loaded = Promise.resolve(s)
+    save(value: T): Promise<void> {
+      latest = value
+      loaded = Promise.resolve(value)
       writing = writing.then(async () => {
         const tmp = `${file}.tmp`
         await writeFile(tmp, JSON.stringify(latest, null, 2))
@@ -55,6 +56,8 @@ export function sessionFile(file: string) {
     }
   }
 }
+
+export const sessionFile = (file: string) => jsonFile(file, parseSession)
 
 // Request counter: only the newest of overlapping requests may act on its result.
 export function latestOnly() {

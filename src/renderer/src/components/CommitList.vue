@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
+import { focusSearchRequest } from '../ui'
 import { nextHit as nextHitIndex, searchCommits } from '../search'
 import { useRepo, WIP } from '../stores/repo'
 import GraphCell from './GraphCell.vue'
@@ -82,15 +83,12 @@ function nextHit(delta: 1 | -1) {
   reveal(index)
 }
 
-const onKey = (e: KeyboardEvent) => {
-  if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
-    e.preventDefault()
-    searchInput.value?.focus()
-    searchInput.value?.select()
-  }
-}
-onMounted(() => window.addEventListener('keydown', onKey))
-onUnmounted(() => window.removeEventListener('keydown', onKey))
+// The "Commits suchen" command (Mod+F by default) asks for focus.
+watch(focusSearchRequest, async () => {
+  await nextTick() // the list may just have been shown again (diff/conflict view closed)
+  searchInput.value?.focus()
+  searchInput.value?.select()
+})
 </script>
 
 <template>
@@ -100,7 +98,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
       ref="searchInput"
       v-model="query"
       type="search"
-      placeholder="Commits suchen (⌘F) – Nachricht, Autor, SHA"
+      placeholder="Commits suchen – Nachricht, Autor, SHA"
       aria-label="Commits suchen"
       @keydown.enter.exact.prevent="nextHit(1)"
       @keydown.shift.enter.prevent="nextHit(-1)"

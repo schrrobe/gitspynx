@@ -1,3 +1,5 @@
+import type { Settings } from './settings'
+
 // Most commits one readLog call returns (a refresh re-reads what is loaded, up to this).
 export const MAX_LOG_PAGE = 50_000
 
@@ -64,6 +66,8 @@ export interface GitspynxApi {
   saveTabs(tabs: string[], active: number): Promise<void>
   saveWorkspace(name: string, repos: string[]): Promise<Session>
   deleteWorkspace(name: string): Promise<Session>
+  getSettings(): Promise<Settings>
+  saveSettings(settings: Settings): Promise<Settings>
   // pages over RepoInfo.tips, or over a subset of them (branch filters)
   readLog(repo: string, skip: number, limit: number, tips?: string[]): Promise<Commit[]>
   readCommit(repo: string, sha: string): Promise<CommitDetail>

@@ -10,6 +10,8 @@ const methods: (keyof GitspynxApi)[] = [
   'saveTabs',
   'saveWorkspace',
   'deleteWorkspace',
+  'getSettings',
+  'saveSettings',
   'readLog',
   'readCommit',
   'readStatus',
