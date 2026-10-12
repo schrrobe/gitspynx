@@ -1,10 +1,18 @@
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import {
+  abortOperation,
   assertRevision,
+  cherryPick,
+  continueOperation,
+  merge,
+  readConflict,
+  rebase,
+  resolveConflict,
+  skipOperation,
   checkout,
   commit,
   createBranch,
@@ -417,5 +425,125 @@ describe('remotes', () => {
     at(lonely, 'commit', '-q', '--allow-empty', '-m', 'x')
     await expect(push(lonely, false)).rejects.toThrow(/no remote/)
     rmSync(lonely, { recursive: true })
+  })
+})
+
+describe('merge, rebase, cherry-pick and conflicts', () => {
+  let md: string
+  const m = (...args: string[]) => execFileSync('git', args, { cwd: md, env }).toString().trim()
+  const write = (f: string, c: string) => writeFileSync(join(md, f), c)
+
+  // main: base -> main-change ; side: base -> side-change (both edit f.txt line 2)
+  beforeAll(() => {
+    md = mkdtempSync(join(tmpdir(), 'gitspynx-merge-'))
+    m('init', '-q', '-b', 'main')
+    write('f.txt', 'one\ntwo\nthree\n')
+    m('add', '.')
+    m('commit', '-q', '-m', 'base')
+    m('switch', '-q', '-c', 'side')
+    write('f.txt', 'one\nSIDE\nthree\n')
+    m('commit', '-q', '-am', 'side-change')
+    m('switch', '-q', 'main')
+    write('f.txt', 'one\nMAIN\nthree\n')
+    m('commit', '-q', '-am', 'main-change')
+    m('switch', '-q', '-c', 'clean', 'main~1')
+    write('other.txt', 'x\n')
+    m('add', '.')
+    m('commit', '-q', '-m', 'clean-change')
+    m('switch', '-q', 'main')
+  })
+  afterAll(() => rmSync(md, { recursive: true, force: true }))
+
+  it('merges cleanly', async () => {
+    expect(await merge(md, 'clean')).toBe('ok')
+    expect(m('log', '-1', '--format=%P').split(' ')).toHaveLength(2)
+    m('reset', '-q', '--hard', 'HEAD~1')
+  })
+
+  it('stops on conflicts, exposes the three versions and completes after resolving', async () => {
+    expect(await merge(md, 'side')).toBe('conflicts')
+    expect((await openRepo(md)).operation).toBe('merge')
+    expect((await readStatus(md)).find((f) => f.path === 'f.txt')?.conflicted).toBe(true)
+    const c = await readConflict(md, 'f.txt')
+    expect(c.base).toBe('one\ntwo\nthree\n')
+    expect(c.ours).toBe('one\nMAIN\nthree\n')
+    expect(c.theirs).toBe('one\nSIDE\nthree\n')
+    expect(c.merged).toContain('<<<<<<<')
+    await resolveConflict(md, 'f.txt', { content: 'one\nMAIN+SIDE\nthree\n' })
+    await continueOperation(md)
+    expect((await openRepo(md)).operation).toBeNull()
+    expect(m('show', 'HEAD:f.txt')).toBe('one\nMAIN+SIDE\nthree')
+    expect(m('log', '-1', '--format=%P').split(' ')).toHaveLength(2)
+    m('reset', '-q', '--hard', 'HEAD~1')
+  })
+
+  it('aborts a conflicted merge', async () => {
+    const head = m('rev-parse', 'HEAD')
+    expect(await merge(md, 'side')).toBe('conflicts')
+    await abortOperation(md)
+    expect((await openRepo(md)).operation).toBeNull()
+    expect(m('rev-parse', 'HEAD')).toBe(head)
+    expect(m('status', '--porcelain')).toBe('')
+  })
+
+  it('rebases with a conflict resolved by taking one side', async () => {
+    m('switch', '-q', 'side')
+    expect(await rebase(md, 'main')).toBe('conflicts')
+    expect((await openRepo(md)).operation).toBe('rebase')
+    await resolveConflict(md, 'f.txt', { side: 'theirs' }) // during rebase: theirs = the commit being replayed
+    await continueOperation(md)
+    expect((await openRepo(md)).operation).toBeNull()
+    expect(m('log', '--format=%s', '-3').split('\n')).toEqual(['side-change', 'main-change', 'base'])
+    expect(m('show', 'HEAD:f.txt')).toBe('one\nSIDE\nthree')
+    m('reset', '-q', '--hard', 'ORIG_HEAD')
+    m('switch', '-q', 'main')
+  })
+
+  it('skips a conflicting commit during a rebase', async () => {
+    m('switch', '-q', 'side')
+    expect(await rebase(md, 'main')).toBe('conflicts')
+    await skipOperation(md)
+    expect((await openRepo(md)).operation).toBeNull()
+    expect(m('rev-parse', 'HEAD')).toBe(m('rev-parse', 'main'))
+    m('reset', '-q', '--hard', 'ORIG_HEAD')
+    m('switch', '-q', 'main')
+  })
+
+  it('cherry-picks a commit and stops on conflicts', async () => {
+    expect(await cherryPick(md, m('rev-parse', 'clean'))).toBe('ok')
+    expect(m('log', '-1', '--format=%s')).toBe('clean-change')
+    m('reset', '-q', '--hard', 'HEAD~1')
+    expect(await cherryPick(md, m('rev-parse', 'side'))).toBe('conflicts')
+    expect((await openRepo(md)).operation).toBe('cherry-pick')
+    await resolveConflict(md, 'f.txt', { side: 'ours' })
+    await continueOperation(md) // resolved to HEAD's content: nothing left to commit
+    expect((await openRepo(md)).operation).toBeNull()
+    expect(m('log', '-1', '--format=%s')).toBe('main-change')
+  })
+
+  it('only resolves paths that are actually in conflict', async () => {
+    await expect(resolveConflict(md, 'f.txt', { content: 'overwritten' })).rejects.toThrow(/not in conflict/)
+    expect(m('status', '--porcelain')).toBe('')
+  })
+
+  it('refuses to write conflict content through a symlink', async () => {
+    expect(await merge(md, 'side')).toBe('conflicts')
+    rmSync(join(md, 'f.txt'))
+    symlinkSync('/tmp/gitspynx-should-not-exist', join(md, 'f.txt'))
+    await expect(resolveConflict(md, 'f.txt', { content: 'x' })).rejects.toThrow(/symlink/)
+    expect(existsSync('/tmp/gitspynx-should-not-exist')).toBe(false)
+    rmSync(join(md, 'f.txt'))
+    await abortOperation(md)
+  })
+
+  it('refuses to resolve paths outside the repository', async () => {
+    await expect(resolveConflict(md, '../evil.txt', { content: 'x' })).rejects.toBeInstanceOf(GitError)
+    await expect(readConflict(md, '../../etc/passwd')).rejects.toBeInstanceOf(GitError)
+  })
+
+  it('reports a failure that is not a conflict as an error', async () => {
+    write('f.txt', 'dirty\n')
+    await expect(merge(md, 'side')).rejects.toBeInstanceOf(GitError)
+    m('checkout', '--', 'f.txt')
   })
 })

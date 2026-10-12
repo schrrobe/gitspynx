@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import CommitDetail from './components/CommitDetail.vue'
+import ConflictView from './components/ConflictView.vue'
 import CommitList from './components/CommitList.vue'
 import DiffView from './components/DiffView.vue'
+import OperationBar from './components/OperationBar.vue'
 import Sidebar from './components/Sidebar.vue'
 import PromptDialog from './components/PromptDialog.vue'
 import WorkdirPanel from './components/WorkdirPanel.vue'
@@ -77,9 +79,11 @@ async function pick() {
       <button @click="pick">Öffnen…</button>
       <button @click="closeRepo">Schließen</button>
     </header>
+    <OperationBar />
     <Sidebar class="sidebar" />
-    <DiffView v-if="repo.diffTarget" class="list" />
-    <CommitList v-show="!repo.diffTarget" class="list" />
+    <ConflictView v-if="repo.conflict" class="list" />
+    <DiffView v-else-if="repo.diffTarget" class="list" />
+    <CommitList v-show="!repo.diffTarget && !repo.conflict" class="list" />
     <WorkdirPanel v-if="repo.selected === WIP" class="detail" />
     <CommitDetail v-else class="detail" />
   </div>
@@ -96,7 +100,7 @@ async function pick() {
 .error { color: var(--danger); }
 .shell {
   display: grid;
-  grid-template: 'bar bar bar' 44px 'side list detail' 1fr / 220px 1fr 340px;
+  grid-template: 'bar bar bar' 44px 'op op op' auto 'side list detail' 1fr / 220px 1fr 340px;
   height: 100%;
 }
 .toolbar {

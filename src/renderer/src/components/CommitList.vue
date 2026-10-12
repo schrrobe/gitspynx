@@ -27,12 +27,25 @@ function onScroll() {
 
 async function menu(sha: string) {
   repo.select(sha)
+  const head = repo.info?.head.branch
+  const onHead = sha === repo.info?.head.sha
   const id = await window.gitspynx.showContextMenu([
     { id: 'create', label: 'Branch hier erstellen…' },
+    ...(head && !onHead
+      ? [
+          { separator: true as const },
+          { id: 'cherry-pick', label: `Cherry-Pick auf „${head}“` },
+          { id: 'merge', label: `In „${head}“ mergen` },
+          { id: 'rebase', label: `„${head}“ hierauf rebasen…` }
+        ]
+      : []),
     { separator: true },
     { id: 'copy', label: 'SHA kopieren' }
   ])
   if (id === 'create') repo.createBranch(sha)
+  else if (id === 'cherry-pick') repo.cherryPick(sha)
+  else if (id === 'merge') repo.mergeInto(sha)
+  else if (id === 'rebase') repo.rebaseOnto(sha)
   else if (id === 'copy') navigator.clipboard.writeText(sha)
 }
 

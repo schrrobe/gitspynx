@@ -2,7 +2,7 @@
 
 Eigenständige Git-Desktop-App (geplant: Electron · TypeScript · Vue 3 · Pinia · Vite).
 
-Aktueller Stand: **M4** – Repository öffnen, Commit-Graph, Arbeitsverzeichnis (Stage/Unstage, Diff, Commit/Amend), Branches (anlegen, wechseln, umbenennen, löschen), Fetch/Pull/Push inkl. Upstream und Force-with-lease.
+Aktueller Stand: **M5** – Repository öffnen, Commit-Graph, Arbeitsverzeichnis (Stage/Unstage, Diff, Commit/Amend), Branches (anlegen, wechseln, umbenennen, löschen), Fetch/Pull/Push inkl. Upstream und Force-with-lease, Merge/Rebase/Cherry-Pick mit Konflikt-Editor.
 
 ## Dokumentation
 
@@ -34,4 +34,4 @@ npm run typecheck
 npm run build      # nach out/
 ```
 
-Stand: M0–M4 aus dem [Implementierungsplan](docs/reverse-engineering/08-implementation-plan.md).
+Stand: M0–M5 aus dem [Implementierungsplan](docs/reverse-engineering/08-implementation-plan.md).

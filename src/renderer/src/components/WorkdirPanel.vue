@@ -10,6 +10,8 @@ const description = ref('')
 const amend = ref(false)
 const busy = ref(false)
 
+const conflicted = computed(() => repo.status.filter((f) => f.conflicted))
+const unstagedFiles = computed(() => repo.unstaged.filter((f) => !f.conflicted))
 const canCommit = computed(() => summary.value.trim() && (repo.staged.length || amend.value) && !busy.value && !repo.busy)
 const isOpen = (f: FileStatus, staged: boolean) =>
   repo.diffTarget && !('sha' in repo.diffTarget) && repo.diffTarget.path === f.path && repo.diffTarget.staged === staged
@@ -48,13 +50,25 @@ async function submit() {
 
 <template>
   <aside class="workdir" aria-label="Arbeitsverzeichnis">
+    <section v-if="conflicted.length" class="files conflicts">
+      <header><h3>Konflikte <span class="dim">{{ conflicted.length }}</span></h3></header>
+      <ul>
+        <li v-for="f in conflicted" :key="f.path" :class="{ open: repo.conflict?.path === f.path }">
+          <button class="file" :title="f.path" @click="repo.openConflict(f.path)">
+            <span class="status mono U">!</span>
+            <span class="path">{{ f.path }}</span>
+          </button>
+        </li>
+      </ul>
+    </section>
+
     <section class="files">
       <header>
-        <h3>Nicht gestaged <span class="dim">{{ repo.unstaged.length }}</span></h3>
-        <button v-if="repo.unstaged.length" :disabled="!!repo.busy" @click="repo.stage(repo.unstaged.map((f) => f.path))">Alle stagen</button>
+        <h3>Nicht gestaged <span class="dim">{{ unstagedFiles.length }}</span></h3>
+        <button v-if="unstagedFiles.length" :disabled="!!repo.busy" @click="repo.stage(unstagedFiles.map((f) => f.path))">Alle stagen</button>
       </header>
       <ul>
-        <li v-for="f in repo.unstaged" :key="f.path" :class="{ open: isOpen(f, false) }">
+        <li v-for="f in unstagedFiles" :key="f.path" :class="{ open: isOpen(f, false) }">
           <button class="file" :title="f.path" @click="repo.openDiff({ path: f.path, staged: false })">
             <span class="status mono" :class="f.unstaged === '?' ? 'A' : f.unstaged">{{ f.unstaged === '?' ? '+' : f.unstaged }}</span>
             <span class="path">{{ f.path }}</span>
@@ -93,6 +107,7 @@ async function submit() {
 
 <style scoped>
 .workdir { display: flex; flex-direction: column; border-left: 1px solid var(--border); background: var(--bg-panel); min-height: 0; }
+.conflicts { flex: none; max-height: 30%; }
 .files { flex: 1; min-height: 0; overflow-y: auto; border-bottom: 1px solid var(--border); }
 .files header { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px 4px; position: sticky; top: 0; background: var(--bg-panel); }
 .files header button { padding: 1px 8px; font-size: 12px; }

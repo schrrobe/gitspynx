@@ -21,6 +21,14 @@ const methods: (keyof GitspynxApi)[] = [
   'pull',
   'push',
   'deleteRemoteBranch',
+  'merge',
+  'rebase',
+  'cherryPick',
+  'continueOperation',
+  'skipOperation',
+  'abortOperation',
+  'readConflict',
+  'resolveConflict',
   'showContextMenu',
   'confirm'
 ]

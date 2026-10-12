@@ -1,9 +1,9 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { Commit, RepoInfo } from '../../../shared/types'
-import { useRepo } from './repo'
+import { useRepo, WIP } from './repo'
 
-const info: RepoInfo = { path: '/r', head: { branch: 'main', sha: 'a0' }, refs: [], tips: ['a0'] }
+const info: RepoInfo = { path: '/r', head: { branch: 'main', sha: 'a0' }, refs: [], tips: ['a0'], operation: null }
 const page = (prefix: string, n = 2000): Commit[] =>
   Array.from({ length: n }, (_, i) => ({
     sha: `${prefix}${i}`,
@@ -269,6 +269,47 @@ describe('repo store', () => {
       expect(checkedOut).toBe(false)
       push.resolve('ok')
       await p
+    })
+  })
+
+  describe('operations', () => {
+    async function opened() {
+      const repo = useRepo()
+      const first = repo.open('/r')
+      await flush()
+      logCalls[0].d.resolve(page('c', 3))
+      await first
+      const w = (globalThis as unknown as { window: { gitspynx: Record<string, unknown> } }).window
+      w.gitspynx.readLog = async () => page('c', 3)
+      return { repo, w }
+    }
+
+    it('shows the working directory when a merge stops on conflicts', async () => {
+      const { repo, w } = await opened()
+      w.gitspynx.merge = async () => 'conflicts'
+      await repo.mergeInto('side')
+      expect(repo.selected).toBe(WIP)
+    })
+
+    it('asks before aborting and does nothing when declined', async () => {
+      const { repo, w } = await opened()
+      let aborted = false
+      w.gitspynx.confirm = async () => false
+      w.gitspynx.abortOperation = async () => void (aborted = true)
+      await repo.abortOp()
+      expect(aborted).toBe(false)
+    })
+
+    it('resolves a conflict and closes the conflict view', async () => {
+      const { repo, w } = await opened()
+      let resolved: unknown = null
+      w.gitspynx.readConflict = async () => ({ base: 'b', ours: 'o', theirs: 't', merged: 'm' })
+      w.gitspynx.resolveConflict = async (_r: string, path: string, res: unknown) => void (resolved = [path, res])
+      await repo.openConflict('f.txt')
+      expect(repo.conflict?.versions.ours).toBe('o')
+      await repo.resolve({ side: 'theirs' })
+      expect(resolved).toEqual(['f.txt', { side: 'theirs' }])
+      expect(repo.conflict).toBeNull()
     })
   })
 })

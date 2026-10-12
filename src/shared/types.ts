@@ -35,7 +35,19 @@ export interface RepoInfo {
   head: { branch: string | null; sha: string | null } // branch null = detached, sha null = unborn
   refs: Ref[]
   tips: string[] // commits the log pages over; fixed until the repo is reopened
+  operation: Operation | null // multi-step operation waiting for conflicts to be resolved
 }
+
+export type Operation = 'merge' | 'rebase' | 'cherry-pick' | 'revert'
+
+export interface ConflictVersions {
+  base: string | null // null: the file did not exist in that version
+  ours: string | null
+  theirs: string | null
+  merged: string | null // work tree file with conflict markers
+}
+
+export type Resolution = { content: string } | { side: 'ours' | 'theirs' }
 
 // Everything the preload exposes as window.gitspynx.
 export interface GitspynxApi {
@@ -58,6 +70,14 @@ export interface GitspynxApi {
   pull(repo: string, mode: 'ff-only' | 'rebase' | 'merge'): Promise<void>
   push(repo: string, force: boolean): Promise<'ok' | 'rejected'> // rejected = remote has commits we don't
   deleteRemoteBranch(repo: string, remoteBranch: string): Promise<void>
+  merge(repo: string, rev: string): Promise<'ok' | 'conflicts'>
+  rebase(repo: string, onto: string): Promise<'ok' | 'conflicts'>
+  cherryPick(repo: string, sha: string): Promise<'ok' | 'conflicts'>
+  continueOperation(repo: string): Promise<'ok' | 'conflicts'>
+  skipOperation(repo: string): Promise<'ok' | 'conflicts'>
+  abortOperation(repo: string): Promise<void>
+  readConflict(repo: string, path: string): Promise<ConflictVersions>
+  resolveConflict(repo: string, path: string, resolution: Resolution): Promise<void>
   showContextMenu(items: MenuItem[]): Promise<string | null> // id of the clicked item
   confirm(message: string, detail: string, okLabel: string): Promise<boolean>
 }

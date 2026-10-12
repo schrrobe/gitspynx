@@ -1,7 +1,8 @@
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
+import { lstat, readFile, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve, sep } from 'node:path'
-import type { Commit, CommitDetail, DiffTarget, FileDiff, FileStatus, RepoInfo } from '../shared/types'
+import type { Commit, CommitDetail, ConflictVersions, DiffTarget, FileDiff, FileStatus, Operation, RepoInfo, Resolution } from '../shared/types'
 import { LOG_FORMAT, parseDiff, parseLog, parseNameStatus, parseRefs, parseStatus, REF_FORMAT } from './parse'
 
 export class GitError extends Error {
@@ -90,7 +91,7 @@ export async function openRepo(dir: string): Promise<RepoInfo> {
   const refs = parseRefs(refsOut.stdout)
   const head = { branch: branch.stdout.trim() || null, sha: sha.stdout.trim() || null }
   const tips = [...new Set([...(head.sha ? [head.sha] : []), ...refs.map((r) => r.target)])]
-  return { path, head, refs, tips }
+  return { path, head, refs, tips, operation: await currentOperation(path) }
 }
 
 // Pages over a fixed set of tips so commits made between pages cannot shift the order.
@@ -266,4 +267,114 @@ export async function gitDirsOutside(path: string): Promise<string[]> {
   const out = (await run(['rev-parse', '--absolute-git-dir', '--git-common-dir'], path)).stdout.trim().split('\n')
   const dirs = [...new Set(out.map((d) => resolve(path, d)))]
   return dirs.filter((d) => d !== join(path, '.git') && !d.startsWith(path + sep))
+}
+
+// ---- merge, rebase, cherry-pick ----
+
+const OPERATION_MARKERS: [string, Operation][] = [
+  ['rebase-merge', 'rebase'],
+  ['rebase-apply', 'rebase'],
+  ['MERGE_HEAD', 'merge'],
+  ['CHERRY_PICK_HEAD', 'cherry-pick'],
+  ['REVERT_HEAD', 'revert']
+]
+
+export async function currentOperation(repo: string): Promise<Operation | null> {
+  const args = OPERATION_MARKERS.flatMap(([file]) => ['--git-path', file])
+  const paths = (await run(['rev-parse', ...args], repo)).stdout.trim().split('\n')
+  const i = paths.findIndex((p) => existsSync(resolve(repo, p)))
+  return i === -1 ? null : OPERATION_MARKERS[i][1]
+}
+
+// Runs a command that may stop on conflicts: 'conflicts' if it left unmerged paths, else rethrows.
+async function mayConflict(repo: string, args: string[]): Promise<'ok' | 'conflicts'> {
+  try {
+    await run(args, repo)
+    return 'ok'
+  } catch (e) {
+    if ((await run(['ls-files', '-u'], repo)).stdout) return 'conflicts'
+    throw e
+  }
+}
+
+export async function merge(repo: string, rev: string): Promise<'ok' | 'conflicts'> {
+  await assertRef(repo, rev)
+  return mayConflict(repo, ['merge', '--no-edit', rev])
+}
+
+export async function rebase(repo: string, onto: string): Promise<'ok' | 'conflicts'> {
+  await assertRef(repo, onto)
+  return mayConflict(repo, ['rebase', onto])
+}
+
+export async function cherryPick(repo: string, sha: string): Promise<'ok' | 'conflicts'> {
+  assertRevision(sha)
+  const parents = (await run(['rev-list', '--parents', '-n1', sha], repo)).stdout.trim().split(' ').length - 1
+  return mayConflict(repo, ['cherry-pick', ...(parents > 1 ? ['-m', '1'] : []), sha])
+}
+
+// Branch/ref names or commit ids from the renderer.
+async function assertRef(repo: string, rev: string): Promise<void> {
+  if (/^[0-9a-f]{4,64}$/i.test(rev)) return
+  await assertBranchName(repo, rev)
+}
+
+const NO_EDITOR = ['-c', 'core.editor=true'] // keep the prepared message, never open an editor
+
+export async function continueOperation(repo: string): Promise<'ok' | 'conflicts'> {
+  const op = await currentOperation(repo)
+  if (!op) throw new GitError('no operation in progress')
+  if (op === 'merge') return mayConflict(repo, [...NO_EDITOR, 'commit', '--no-edit'])
+  // A commit whose resolution matches HEAD leaves nothing to commit: skip it like git suggests.
+  const nothingStaged = (await run(['diff', '--cached', '--quiet'], repo, [0, 1])).code === 0
+  if (nothingStaged && !(await run(['ls-files', '-u'], repo)).stdout) return mayConflict(repo, [op, '--skip'])
+  return mayConflict(repo, [...NO_EDITOR, op, '--continue'])
+}
+
+export async function abortOperation(repo: string): Promise<void> {
+  const op = await currentOperation(repo)
+  if (!op) throw new GitError('no operation in progress')
+  await run([op, '--abort'], repo)
+}
+
+export async function skipOperation(repo: string): Promise<'ok' | 'conflicts'> {
+  const op = await currentOperation(repo)
+  if (op !== 'rebase' && op !== 'cherry-pick' && op !== 'revert') throw new GitError('nothing to skip')
+  return mayConflict(repo, [op, '--skip'])
+}
+
+// Renderer paths that are opened directly on disk: inside the work tree and actually unmerged.
+async function conflictedFile(repo: string, path: string): Promise<string> {
+  const full = resolve(repo, path)
+  if (!full.startsWith(repo + sep)) throw new GitError(`path outside repository: ${path}`)
+  if (!(await run([LITERAL, 'ls-files', '-u', '--', path], repo)).stdout) throw new GitError(`not in conflict: ${path}`)
+  return full
+}
+
+async function indexStage(repo: string, n: 1 | 2 | 3, path: string): Promise<string | null> {
+  const { code, stdout } = await run(['show', `:${n}:${path}`], repo, [0, 128])
+  return code === 0 ? stdout : null
+}
+
+export async function readConflict(repo: string, path: string): Promise<ConflictVersions> {
+  const full = await conflictedFile(repo, path)
+  const [base, ours, theirs, merged] = await Promise.all([
+    indexStage(repo, 1, path),
+    indexStage(repo, 2, path),
+    indexStage(repo, 3, path),
+    readFile(full, 'utf8').catch(() => null)
+  ])
+  return { base, ours, theirs, merged }
+}
+
+export async function resolveConflict(repo: string, path: string, resolution: Resolution): Promise<void> {
+  const full = await conflictedFile(repo, path)
+  if ('content' in resolution) {
+    const st = await lstat(full).catch(() => null)
+    if (st?.isSymbolicLink()) throw new GitError(`refusing to write through a symlink: ${path}`)
+    await writeFile(full, resolution.content)
+  } else {
+    await run([LITERAL, 'checkout', `--${resolution.side}`, '--', path], repo)
+  }
+  await stage(repo, [path])
 }

@@ -1,9 +1,12 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu } from 'electron'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { DiffTarget, GitspynxApi, MenuItem, RepoChange } from '../shared/types'
+import type { DiffTarget, GitspynxApi, MenuItem, RepoChange, Resolution } from '../shared/types'
 import {
+  abortOperation,
   checkout,
+  cherryPick,
+  continueOperation,
   commit,
   createBranch,
   deleteBranch,
@@ -12,14 +15,19 @@ import {
   GitError,
   gitDirsOutside,
   isRejectedPush,
+  merge,
   openRepo,
   pull,
   push,
   readCommit,
+  readConflict,
   readFileDiff,
   readLog,
   readStatus,
+  rebase,
   renameBranch,
+  resolveConflict,
+  skipOperation,
   stage,
   unstage
 } from './git'
@@ -62,6 +70,13 @@ function diffTarget(v: unknown): DiffTarget {
   const t = v as Record<string, unknown> | null
   if (t && typeof t.sha === 'string') return { path: str(t.path), sha: t.sha }
   if (t && typeof t.staged === 'boolean') return { path: str(t.path), staged: t.staged }
+  throw new GitError('invalid argument')
+}
+
+function resolution(v: unknown): Resolution {
+  const r = v as Record<string, unknown> | null
+  if (r && typeof r.content === 'string') return { content: r.content }
+  if (r && (r.side === 'ours' || r.side === 'theirs')) return { side: r.side }
   throw new GitError('invalid argument')
 }
 
@@ -168,6 +183,14 @@ const handlers: Handlers = {
     }
   },
   deleteRemoteBranch: (_s, repo, name) => deleteRemoteBranch(knownRepo(repo), str(name)),
+  merge: (_s, repo, rev) => merge(knownRepo(repo), str(rev)),
+  rebase: (_s, repo, onto) => rebase(knownRepo(repo), str(onto)),
+  cherryPick: (_s, repo, sha) => cherryPick(knownRepo(repo), str(sha)),
+  continueOperation: (_s, repo) => continueOperation(knownRepo(repo)),
+  skipOperation: (_s, repo) => skipOperation(knownRepo(repo)),
+  abortOperation: (_s, repo) => abortOperation(knownRepo(repo)),
+  readConflict: (_s, repo, path) => readConflict(knownRepo(repo), str(path)),
+  resolveConflict: (_s, repo, path, r) => resolveConflict(knownRepo(repo), str(path), resolution(r)),
   showContextMenu: (sender, items) => popupMenu(sender, menuItems(items)),
   async confirm(sender, message, detail, okLabel) {
     const window = BrowserWindow.fromWebContents(sender)!

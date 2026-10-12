@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref, shallowRef } from 'vue'
-import type { Commit, CommitDetail, DiffTarget, FileDiff, FileStatus, RepoInfo } from '../../../shared/types'
+import type { Commit, CommitDetail, ConflictVersions, DiffTarget, FileDiff, FileStatus, RepoInfo, Resolution } from '../../../shared/types'
 import { layoutGraph } from '../graph/layout'
 import { ask } from '../prompt'
 
@@ -19,6 +19,7 @@ export const useRepo = defineStore('repo', () => {
   const diffTarget = shallowRef<DiffTarget | null>(null) // shallow: identity is compared to drop stale diffs
   const diff = ref<FileDiff | null>(null)
   const busy = ref<'fetch' | 'pull' | 'push' | null>(null) // running network operation
+  const conflict = shallowRef<{ path: string; versions: ConflictVersions } | null>(null)
   // Bumped whenever the loaded history is replaced; results of older requests are dropped.
   let generation = 0
 
@@ -138,6 +139,7 @@ export const useRepo = defineStore('repo', () => {
   const openDiff = (target: DiffTarget) =>
     guard(async () => {
       if (!info.value) return
+      conflict.value = null
       diffTarget.value = target
       const d = await window.gitspynx.readFileDiff(info.value.path, target)
       if (diffTarget.value === target) diff.value = d
@@ -249,8 +251,54 @@ export const useRepo = defineStore('repo', () => {
       await network('push', (r) => window.gitspynx.deleteRemoteBranch(r, name))
   }
 
+  // Merge/rebase/cherry-pick: on conflicts show the working directory where they get resolved.
+  async function integrate(op: (repo: string) => Promise<'ok' | 'conflicts'>) {
+    let result = 'ok' as 'ok' | 'conflicts' // assigned inside the callback
+    await mutate(async (r) => void (result = await op(r)))
+    if (result === 'conflicts') await select(WIP)
+  }
+
+  const mergeInto = (rev: string) => integrate((r) => window.gitspynx.merge(r, rev))
+  const cherryPick = (sha: string) => integrate((r) => window.gitspynx.cherryPick(r, sha))
+  const continueOp = () => integrate((r) => window.gitspynx.continueOperation(r))
+  const skipOp = () => integrate((r) => window.gitspynx.skipOperation(r))
+
+  async function rebaseOnto(rev: string) {
+    const branch = info.value?.head.branch
+    const ok = await window.gitspynx.confirm(
+      `„${branch}“ auf „${rev}“ rebasen?`,
+      'Die Commits des Branches werden neu geschrieben. Bereits gepushte Commits brauchen danach einen Force-Push.',
+      'Rebase'
+    )
+    if (ok) await integrate((r) => window.gitspynx.rebase(r, rev))
+  }
+
+  async function abortOp() {
+    const op = info.value?.operation
+    if (await window.gitspynx.confirm(`${op ?? 'Operation'} abbrechen?`, 'Alle bisherigen Konfliktlösungen dieser Operation gehen verloren.', 'Abbrechen'))
+      await mutate((r) => window.gitspynx.abortOperation(r))
+    conflict.value = null
+  }
+
+  const openConflict = (path: string) =>
+    guard(async () => {
+      if (!info.value) return
+      closeDiff()
+      const versions = await window.gitspynx.readConflict(info.value.path, path)
+      conflict.value = { path, versions }
+    })
+
+  const resolve = (resolution: Resolution) =>
+    guard(async () => {
+      if (!info.value || !conflict.value) return
+      await window.gitspynx.resolveConflict(info.value.path, conflict.value.path, resolution)
+      conflict.value = null
+      await refreshStatus()
+    })
+
   const close = () => {
     void window.gitspynx.closeRepo()
+    conflict.value = null
     generation++
     loading.value = false
     info.value = null
@@ -262,6 +310,7 @@ export const useRepo = defineStore('repo', () => {
   return {
     info, commits, complete, loading, error, selected, detail, status, staged, unstaged, diffTarget, diff, unstageFiles,
     graph, refsBySha, open, refresh, loadMore, select, refreshStatus, openDiff, closeDiff, stage, unstage, commit, close,
-    checkoutBranch, createBranch, renameBranch, deleteBranch, busy, fetchAll, pullBranch, pushBranch, deleteRemoteBranch
+    checkoutBranch, createBranch, renameBranch, deleteBranch, busy, fetchAll, pullBranch, pushBranch, deleteRemoteBranch,
+    conflict, mergeInto, rebaseOnto, cherryPick, continueOp, skipOp, abortOp, openConflict, resolve
   }
 })

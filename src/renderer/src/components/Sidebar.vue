@@ -8,9 +8,17 @@ const isHead = (r: Ref) => r.kind === 'local' && r.name === repo.info?.head.bran
 
 async function menu(r: Ref) {
   const branch = r.kind === 'local' || r.kind === 'remote'
+  const head = repo.info?.head.branch
   const id = await window.gitspynx.showContextMenu([
     ...(branch ? [{ id: 'checkout', label: r.kind === 'remote' ? 'Als lokalen Branch auschecken' : 'Auschecken', enabled: !isHead(r) }] : []),
     { id: 'create', label: 'Branch hier erstellen…' },
+    ...(branch && !isHead(r) && head
+      ? [
+          { separator: true as const },
+          { id: 'merge', label: `„${r.name}“ in „${head}“ mergen` },
+          { id: 'rebase', label: `„${head}“ auf „${r.name}“ rebasen…` }
+        ]
+      : []),
     ...(r.kind === 'local'
       ? [{ id: 'rename', label: 'Umbenennen…' }, { separator: true as const }, { id: 'delete', label: 'Löschen…', enabled: !isHead(r) }]
       : []),
@@ -21,6 +29,8 @@ async function menu(r: Ref) {
   else if (id === 'rename') repo.renameBranch(r.name)
   else if (id === 'delete') repo.deleteBranch(r.name)
   else if (id === 'delete-remote') repo.deleteRemoteBranch(r.name)
+  else if (id === 'merge') repo.mergeInto(r.name)
+  else if (id === 'rebase') repo.rebaseOnto(r.name)
 }
 
 function open(r: Ref) {
