@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process'
-import type { Commit, CommitDetail, RepoInfo } from '../shared/types'
-import { LOG_FORMAT, parseLog, parseNameStatus, parseRefs, REF_FORMAT, US } from './parse'
+import { basename, dirname } from 'node:path'
+import type { Commit, CommitDetail, DiffTarget, FileDiff, FileStatus, RepoInfo } from '../shared/types'
+import { LOG_FORMAT, parseDiff, parseLog, parseNameStatus, parseRefs, parseStatus, REF_FORMAT } from './parse'
 
 export class GitError extends Error {
   constructor(message: string, readonly code: number | null = null, readonly stderr = '') {
@@ -14,15 +15,16 @@ interface Result {
 }
 
 // Runs git without a shell. Exit codes listed in okCodes are returned instead of thrown.
-export function run(args: string[], cwd: string, okCodes = [0]): Promise<Result> {
+export function run(args: string[], cwd: string, okCodes = [0], stdin?: string): Promise<Result> {
   return new Promise((resolve, reject) => {
-    execFile(
+    const child = execFile(
       'git',
       ['--no-optional-locks', ...args],
       {
         cwd,
         maxBuffer: 256 * 1024 * 1024,
-        env: { ...process.env, GIT_TERMINAL_PROMPT: '0', LC_ALL: 'C' }
+        // literal pathspecs: renderer-supplied paths never act as globs or :(magic)
+        env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_LITERAL_PATHSPECS: '1', LC_ALL: 'C' }
       },
       (err, stdout, stderr) => {
         const code = err ? (typeof err.code === 'number' ? err.code : -1) : 0
@@ -30,6 +32,7 @@ export function run(args: string[], cwd: string, okCodes = [0]): Promise<Result>
         reject(new GitError(stderr.trim() || err?.message || 'git failed', code, stderr))
       }
     )
+    child.stdin?.end(stdin)
   })
 }
 
@@ -41,34 +44,34 @@ export function assertRevision(rev: string): void {
 }
 
 export async function openRepo(dir: string): Promise<RepoInfo> {
-  // A .git directory is accepted too; resolve to the work tree.
-  const { stdout: isGitDir } = await run(['rev-parse', '--is-inside-git-dir'], dir).catch(() => {
-    throw new GitError(`not a git repository: ${dir}`)
+  const probe = await run(['rev-parse', '--is-bare-repository', '--is-inside-git-dir'], dir).catch((e: GitError) => {
+    throw new GitError(/not a git repository/.test(e.message) ? `not a git repository: ${dir}` : e.message)
   })
-  const cwd = isGitDir.trim() === 'true' ? `${dir}/..` : dir
+  const [bare, insideGitDir] = probe.stdout.trim().split('\n')
+  if (bare === 'true') throw new GitError('bare repositories are not supported (no working tree)')
+  // Accept the .git directory itself and open its work tree; anything deeper is ambiguous.
+  if (insideGitDir === 'true' && basename(dir) !== '.git') throw new GitError('choose the working tree, not a folder inside the .git directory')
+  const cwd = insideGitDir === 'true' ? dirname(dir) : dir
   const path = (await run(['rev-parse', '--show-toplevel'], cwd)).stdout.trim()
-  const [branch, sha, refs] = await Promise.all([
+  const [branch, sha, refsOut] = await Promise.all([
     run(['symbolic-ref', '-q', '--short', 'HEAD'], path, [0, 1]),
     run(['rev-parse', '-q', '--verify', 'HEAD'], path, [0, 1]),
     run(['for-each-ref', `--format=${REF_FORMAT}`], path)
   ])
-  return {
-    path,
-    head: { branch: branch.stdout.trim() || null, sha: sha.stdout.trim() || null },
-    refs: parseRefs(refs.stdout)
-  }
+  const refs = parseRefs(refsOut.stdout)
+  const head = { branch: branch.stdout.trim() || null, sha: sha.stdout.trim() || null }
+  const tips = [...new Set([...(head.sha ? [head.sha] : []), ...refs.map((r) => r.target)])]
+  return { path, head, refs, tips }
 }
 
-export async function readLog(repo: string, skip: number, limit: number): Promise<Commit[]> {
-  const { stdout } = await run(
-    ['log', '--all', '--topo-order', `--format=${LOG_FORMAT}`, `--skip=${skip}`, `-n${limit}`],
-    repo,
-    [0, 128] // 128: unborn HEAD / no commits yet
-  )
-  return parseLog(stdout)
+// Pages over a fixed set of tips so commits made between pages cannot shift the order.
+export async function readLog(repo: string, tips: string[], skip: number, limit: number): Promise<Commit[]> {
+  if (!tips.length) return []
+  const args = ['log', '--stdin', '-z', '--topo-order', `--format=${LOG_FORMAT}`, `--skip=${skip}`, `-n${limit}`, '--']
+  return parseLog((await run(args, repo, [0], tips.join('\n') + '\n')).stdout)
 }
 
-const DETAIL_FORMAT = ['%H', '%P', '%an', '%ae', '%at', '%s', '%cn', '%ct', '%b'].join('%x1f')
+const DETAIL_FORMAT = ['%H', '%P', '%an', '%ae', '%at', '%s', '%cn', '%ct', '%b'].join('%x00') // body last
 
 export async function readCommit(repo: string, rev: string): Promise<CommitDetail> {
   assertRevision(rev)
@@ -76,7 +79,7 @@ export async function readCommit(repo: string, rev: string): Promise<CommitDetai
     run(['show', '-s', `--format=${DETAIL_FORMAT}`, rev, '--'], repo),
     run(['diff-tree', '-r', '--root', '-m', '--first-parent', '--no-commit-id', '--name-status', '-z', rev, '--'], repo)
   ])
-  const [sha, parents, author, email, date, subject, committer, committerDate, body] = meta.stdout.split(US)
+  const [sha, parents, author, email, date, subject, committer, committerDate, ...body] = meta.stdout.split('\0')
   return {
     sha,
     parents: parents ? parents.split(' ') : [],
@@ -86,7 +89,42 @@ export async function readCommit(repo: string, rev: string): Promise<CommitDetai
     subject,
     committer,
     committerDate: Number(committerDate),
-    body: body.trimEnd(),
+    body: body.join('\0').trimEnd(),
     files: parseNameStatus(files.stdout)
   }
+}
+
+export async function readStatus(repo: string): Promise<FileStatus[]> {
+  const { stdout } = await run(['status', '--porcelain=v2', '-z', '--untracked-files=all'], repo)
+  return parseStatus(stdout)
+}
+
+export async function stage(repo: string, paths: string[]): Promise<void> {
+  await run(['add', '-A', '--', ...paths], repo)
+}
+
+export async function unstage(repo: string, paths: string[]): Promise<void> {
+  const head = await run(['rev-parse', '-q', '--verify', 'HEAD'], repo, [0, 1])
+  if (head.code === 1) await run(['rm', '--cached', '-r', '-q', '--', ...paths], repo) // no commit yet
+  else await run(['restore', '--staged', '--', ...paths], repo)
+}
+
+const DIFF_OPTS = ['--no-color', '--no-ext-diff']
+
+export async function readFileDiff(repo: string, target: DiffTarget): Promise<FileDiff> {
+  const { path } = target
+  if ('sha' in target) {
+    assertRevision(target.sha)
+    const args = ['diff-tree', '-p', '--root', '-m', '--first-parent', '--no-commit-id', ...DIFF_OPTS, target.sha, '--', path]
+    return parseDiff((await run(args, repo)).stdout)
+  }
+  if (target.staged) return parseDiff((await run(['diff', '--cached', ...DIFF_OPTS, '--', path], repo)).stdout)
+  const tracked = (await run(['ls-files', '--', path], repo)).stdout !== ''
+  if (tracked) return parseDiff((await run(['diff', ...DIFF_OPTS, '--', path], repo)).stdout)
+  return parseDiff((await run(['diff', '--no-index', ...DIFF_OPTS, '--', '/dev/null', path], repo, [0, 1])).stdout)
+}
+
+export async function commit(repo: string, message: string, amend: boolean): Promise<void> {
+  if (!message.trim()) throw new GitError('commit message is empty')
+  await run(['commit', '-F', '-', ...(amend ? ['--amend'] : [])], repo, [0], message)
 }

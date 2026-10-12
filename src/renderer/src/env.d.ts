@@ -1,8 +1,8 @@
-import type { GitspynxApi } from '../../shared/types'
+import type { GitspynxBridge } from '../../shared/types'
 
 declare global {
   interface Window {
-    gitspynx: GitspynxApi
+    gitspynx: GitspynxBridge
   }
 }
 

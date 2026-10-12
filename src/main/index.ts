@@ -1,15 +1,18 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
+import { type FSWatcher, watch } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { GitspynxApi } from '../shared/types'
-import { GitError, openRepo, readCommit, readLog } from './git'
+import type { DiffTarget, GitspynxApi, RepoChange } from '../shared/types'
+import { commit, GitError, openRepo, readCommit, readFileDiff, readLog, readStatus, stage, unstage } from './git'
 
 const recentFile = () => join(app.getPath('userData'), 'recent.json')
-const opened = new Set<string>() // only repos the user opened may be queried
+const picked = new Set<string>() // folders the user chose in the dialog this session
+const opened = new Map<string, string[]>() // opened repo -> log tips; only these may be queried
 
 async function loadRecent(): Promise<string[]> {
   try {
-    return JSON.parse(await readFile(recentFile(), 'utf8'))
+    const list: unknown = JSON.parse(await readFile(recentFile(), 'utf8'))
+    return Array.isArray(list) ? list.filter((p): p is string => typeof p === 'string') : []
   } catch {
     return []
   }
@@ -30,30 +33,82 @@ function int(v: unknown, max: number): number {
   return v as number
 }
 
+function paths(v: unknown): string[] {
+  if (!Array.isArray(v) || v.length === 0 || v.length > 10000) throw new GitError('invalid argument')
+  return v.map(str)
+}
+
+function diffTarget(v: unknown): DiffTarget {
+  const t = v as Record<string, unknown> | null
+  if (t && typeof t.sha === 'string') return { path: str(t.path), sha: t.sha }
+  if (t && typeof t.staged === 'boolean') return { path: str(t.path), staged: t.staged }
+  throw new GitError('invalid argument')
+}
+
+// One watched repository at a time; changes are debounced and pushed to the window.
+// ponytail: single repo watcher, one per tab once tabs exist (M8)
+let watcher: FSWatcher | null = null
+function watchRepo(path: string, win: Electron.WebContents) {
+  watcher?.close()
+  let timer: NodeJS.Timeout | undefined
+  let git = false
+  watcher = watch(path, { recursive: true }, (_event, file) => {
+    const f = String(file ?? '')
+    if (f.startsWith('.git/objects/') || f.endsWith('.lock')) return
+    git ||= f === '.git' || f.startsWith('.git/')
+    clearTimeout(timer)
+    timer = setTimeout(() => {
+      if (!win.isDestroyed()) win.send('repo:changed', { repo: path, git } satisfies RepoChange)
+      git = false
+    }, 300)
+  })
+  watcher.on('error', () => watcher?.close())
+}
+
 function knownRepo(v: unknown): string {
   const path = str(v)
   if (!opened.has(path)) throw new GitError('repository not opened')
   return path
 }
 
-const handlers: { [K in keyof GitspynxApi]: (...args: unknown[]) => ReturnType<GitspynxApi[K]> } = {
+// The renderer may only open what the user picked or opened before (recent list).
+async function allowedPath(v: unknown): Promise<string> {
+  const path = str(v)
+  if (picked.has(path) || opened.has(path) || (await loadRecent()).includes(path)) return path
+  throw new GitError('choose the repository with the open dialog first')
+}
+
+type Handlers = { [K in keyof GitspynxApi]: (sender: Electron.WebContents, ...args: unknown[]) => ReturnType<GitspynxApi[K]> }
+
+const handlers: Handlers = {
   async pickRepo() {
     const res = await dialog.showOpenDialog({ properties: ['openDirectory'] })
-    return res.canceled ? null : res.filePaths[0]
+    if (res.canceled) return null
+    picked.add(res.filePaths[0])
+    return res.filePaths[0]
   },
-  recentRepos: loadRecent,
-  async openRepo(path) {
-    const info = await openRepo(str(path))
-    opened.add(info.path)
+  recentRepos: () => loadRecent(),
+  async openRepo(sender, path) {
+    const info = await openRepo(await allowedPath(path))
+    opened.set(info.path, info.tips)
     await remember(info.path)
+    watchRepo(info.path, sender)
     return info
   },
-  readLog: (repo, skip, limit) => readLog(knownRepo(repo), int(skip, 1e7), int(limit, 10000)),
-  readCommit: (repo, sha) => readCommit(knownRepo(repo), str(sha))
+  readLog: (_s, repo, skip, limit) => {
+    const path = knownRepo(repo)
+    return readLog(path, opened.get(path)!, int(skip, 1e7), int(limit, 10000))
+  },
+  readCommit: (_s, repo, sha) => readCommit(knownRepo(repo), str(sha)),
+  readStatus: (_s, repo) => readStatus(knownRepo(repo)),
+  stage: (_s, repo, p) => stage(knownRepo(repo), paths(p)),
+  unstage: (_s, repo, p) => unstage(knownRepo(repo), paths(p)),
+  readFileDiff: (_s, repo, target) => readFileDiff(knownRepo(repo), diffTarget(target)),
+  commit: (_s, repo, message, amend) => commit(knownRepo(repo), str(message), amend === true)
 }
 
 for (const [name, fn] of Object.entries(handlers)) {
-  ipcMain.handle(`api:${name}`, (_e, ...args) => (fn as (...a: unknown[]) => unknown)(...args))
+  ipcMain.handle(`api:${name}`, (e, ...args) => (fn as (s: Electron.WebContents, ...a: unknown[]) => unknown)(e.sender, ...args))
 }
 
 function createWindow() {

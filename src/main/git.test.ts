@@ -1,9 +1,9 @@
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { assertRevision, GitError, openRepo, readCommit, readLog } from './git'
+import { assertRevision, commit, GitError, openRepo, readCommit, readFileDiff, readLog, readStatus, stage, unstage } from './git'
 
 const env = {
   ...process.env,
@@ -14,6 +14,7 @@ const env = {
   GIT_COMMITTER_NAME: 'Tester',
   GIT_COMMITTER_EMAIL: 't@example.com'
 }
+Object.assign(process.env, env) // run() inherits process.env: isolate from the user's git config
 let dir: string
 const g = (...args: string[]) => execFileSync('git', args, { cwd: dir, env }).toString().trim()
 
@@ -49,10 +50,54 @@ describe('git backend', () => {
   })
 
   it('reads the log in topological order with paging', async () => {
-    const all = await readLog(dir, 0, 100)
+    const { tips } = await openRepo(dir)
+    const all = await readLog(dir, tips, 0, 100)
     expect(all.map((c) => c.subject)).toEqual(['merge topic', 'on topic', 'first'])
     expect(all[0].parents).toHaveLength(2)
-    expect((await readLog(dir, 1, 1)).map((c) => c.subject)).toEqual(['on topic'])
+    expect((await readLog(dir, tips, 1, 1)).map((c) => c.subject)).toEqual(['on topic'])
+  })
+
+  it('pages over the tips captured when the repo was opened', async () => {
+    const { tips } = await openRepo(dir)
+    g('commit', '-q', '--allow-empty', '-m', 'made later in a terminal')
+    const page = await readLog(dir, tips, 0, 1)
+    g('reset', '-q', '--hard', 'HEAD~1')
+    expect(page.map((c) => c.subject)).toEqual(['merge topic'])
+  })
+
+  it('keeps separator characters inside subjects and bodies', async () => {
+    g('commit', '-q', '--allow-empty', '-m', 'odd \x1e subject', '-m', 'body \x1f text')
+    const { tips } = await openRepo(dir)
+    const [top] = await readLog(dir, tips, 0, 1)
+    const detail = await readCommit(dir, 'HEAD')
+    g('reset', '-q', '--hard', 'HEAD~1')
+    expect(top.subject).toBe('odd \x1e subject')
+    expect(detail.body).toBe('body \x1f text')
+  })
+
+  it('returns no commits for a repository without commits', async () => {
+    const empty = mkdtempSync(join(tmpdir(), 'gitspynx-empty-'))
+    execFileSync('git', ['init', '-q'], { cwd: empty, env })
+    const info = await openRepo(empty)
+    expect(info.head.sha).toBeNull()
+    expect(await readLog(empty, info.tips, 0, 10)).toEqual([])
+    rmSync(empty, { recursive: true })
+  })
+
+  it('refuses bare repositories and git-internal directories', async () => {
+    const bare = mkdtempSync(join(tmpdir(), 'gitspynx-bare-'))
+    execFileSync('git', ['init', '-q', '--bare'], { cwd: bare, env })
+    await expect(openRepo(bare)).rejects.toThrow(/bare/)
+    rmSync(bare, { recursive: true })
+    await expect(openRepo(join(dir, '.git', 'refs'))).rejects.toThrow(/inside the \.git directory/)
+  })
+
+  it('does not open a surrounding repository for a nested bare repo', async () => {
+    const nested = join(dir, '.git', 'nested.git')
+    mkdirSync(nested)
+    execFileSync('git', ['init', '-q', '--bare'], { cwd: nested, env })
+    await expect(openRepo(nested)).rejects.toThrow(/bare/)
+    rmSync(nested, { recursive: true })
   })
 
   it('reads commit details with files changed against the first parent', async () => {
@@ -66,5 +111,72 @@ describe('git backend', () => {
   it('refuses revisions that could be read as options', () => {
     expect(() => assertRevision('--output=/tmp/x')).toThrow(GitError)
     expect(() => assertRevision('a'.repeat(40))).not.toThrow()
+  })
+})
+
+describe('working directory', () => {
+  let wd: string
+  const w = (...args: string[]) => execFileSync('git', args, { cwd: wd, env }).toString().trim()
+
+  beforeAll(() => {
+    wd = mkdtempSync(join(tmpdir(), 'gitspynx-wd-'))
+    w('init', '-q', '-b', 'main')
+  })
+  afterAll(() => rmSync(wd, { recursive: true, force: true }))
+
+  it('stages and unstages in a repository without commits', async () => {
+    writeFileSync(join(wd, 'first.txt'), 'hello\n')
+    await stage(wd, ['first.txt'])
+    expect(await readStatus(wd)).toEqual([{ path: 'first.txt', staged: 'A', unstaged: null, conflicted: false }])
+    await unstage(wd, ['first.txt'])
+    expect(await readStatus(wd)).toEqual([{ path: 'first.txt', staged: null, unstaged: '?', conflicted: false }])
+  })
+
+  it('commits staged changes and amends the last commit', async () => {
+    await stage(wd, ['first.txt'])
+    await commit(wd, 'initial\n\nbody text', false)
+    expect(w('log', '-1', '--format=%s|%b')).toBe('initial|body text')
+    writeFileSync(join(wd, 'second.txt'), 'x\n')
+    await stage(wd, ['second.txt'])
+    await commit(wd, 'initial, amended', true)
+    expect(w('rev-list', '--count', 'HEAD')).toBe('1')
+    expect(w('show', '--name-only', '--format=%s', 'HEAD').split('\n').filter(Boolean)).toEqual([
+      'initial, amended',
+      'first.txt',
+      'second.txt'
+    ])
+  })
+
+  it('stages a deletion', async () => {
+    rmSync(join(wd, 'second.txt'))
+    await stage(wd, ['second.txt'])
+    expect(await readStatus(wd)).toEqual([{ path: 'second.txt', staged: 'D', unstaged: null, conflicted: false }])
+    await unstage(wd, ['second.txt'])
+    expect(await readStatus(wd)).toEqual([{ path: 'second.txt', staged: null, unstaged: 'D', conflicted: false }])
+  })
+
+  it('diffs unstaged, staged and untracked files', async () => {
+    writeFileSync(join(wd, 'first.txt'), 'hello\nworld\n')
+    const unstaged = await readFileDiff(wd, { path: 'first.txt', staged: false })
+    expect(unstaged.hunks[0].lines.map((l) => l.type + l.text)).toEqual([' hello', '+world'])
+    expect((await readFileDiff(wd, { path: 'first.txt', staged: true })).hunks).toEqual([])
+    writeFileSync(join(wd, 'new.txt'), 'a\nb\n')
+    const untracked = await readFileDiff(wd, { path: 'new.txt', staged: false })
+    expect(untracked.hunks[0].lines.map((l) => l.type + l.text)).toEqual(['+a', '+b'])
+  })
+
+  it('diffs a file inside a commit against its first parent', async () => {
+    const d = await readFileDiff(wd, { path: 'first.txt', sha: w('rev-parse', 'HEAD') })
+    expect(d.hunks[0].lines.map((l) => l.type + l.text)).toEqual(['+hello'])
+  })
+
+  it('treats a path that looks like an option as a literal path', async () => {
+    writeFileSync(join(wd, '--force'), 'x')
+    await stage(wd, ['--force'])
+    expect((await readStatus(wd)).find((f) => f.path === '--force')?.staged).toBe('A')
+  })
+
+  it('refuses to commit with an empty message', async () => {
+    await expect(commit(wd, '   \n', false)).rejects.toBeInstanceOf(GitError)
   })
 })

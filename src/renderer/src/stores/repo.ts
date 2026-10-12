@@ -1,9 +1,10 @@
 import { defineStore } from 'pinia'
 import { computed, ref, shallowRef } from 'vue'
-import type { Commit, CommitDetail, RepoInfo } from '../../../shared/types'
+import type { Commit, CommitDetail, DiffTarget, FileDiff, FileStatus, RepoInfo } from '../../../shared/types'
 import { layoutGraph } from '../graph/layout'
 
 const PAGE = 2000
+export const WIP = 'WIP' // pseudo selection for the working directory
 
 export const useRepo = defineStore('repo', () => {
   const info = ref<RepoInfo | null>(null)
@@ -13,6 +14,11 @@ export const useRepo = defineStore('repo', () => {
   const error = ref<string | null>(null)
   const selected = ref<string | null>(null)
   const detail = ref<CommitDetail | null>(null)
+  const status = ref<FileStatus[]>([])
+  const diffTarget = ref<DiffTarget | null>(null)
+  const diff = ref<FileDiff | null>(null)
+  // Bumped whenever the loaded history is replaced; results of older requests are dropped.
+  let generation = 0
 
   const graph = computed(() => layoutGraph(commits.value))
   const refsBySha = computed(() => {
@@ -20,42 +26,64 @@ export const useRepo = defineStore('repo', () => {
     for (const r of info.value?.refs ?? []) map.set(r.target, [...(map.get(r.target) ?? []), r])
     return map
   })
+  const staged = computed(() => status.value.filter((f) => f.staged))
+  const unstaged = computed(() => status.value.filter((f) => f.unstaged))
+
+  function report(e: unknown) {
+    error.value = e instanceof Error ? e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '') : String(e)
+  }
 
   async function guard(fn: () => Promise<void>) {
     error.value = null
     try {
       await fn()
     } catch (e) {
-      error.value = e instanceof Error ? e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '') : String(e)
+      report(e)
     }
   }
 
-  const open = (path: string) =>
+  // Reads repo state and the first pages again; keepCount keeps at least that many commits loaded.
+  const open = (path: string, keepCount = 0) =>
     guard(async () => {
+      const gen = ++generation
       loading.value = true
       try {
         const next = await window.gitspynx.openRepo(path)
-        const first = await window.gitspynx.readLog(next.path, 0, PAGE)
+        const [first, files] = await Promise.all([
+          window.gitspynx.readLog(next.path, 0, Math.max(PAGE, keepCount)),
+          window.gitspynx.readStatus(next.path)
+        ])
+        if (gen !== generation) return
+        const samePath = info.value?.path === next.path
         info.value = next
         commits.value = first
-        complete.value = first.length < PAGE
-        selected.value = null
-        detail.value = null
+        status.value = files
+        complete.value = first.length < Math.max(PAGE, keepCount)
+        if (!samePath) {
+          selected.value = null
+          detail.value = null
+          diffTarget.value = null
+          diff.value = null
+        }
       } finally {
-        loading.value = false
+        if (gen === generation) loading.value = false
       }
     })
+
+  const refresh = () => info.value && open(info.value.path, commits.value.length)
 
   const loadMore = () =>
     guard(async () => {
       if (!info.value || loading.value || complete.value) return
+      const gen = generation
       loading.value = true
       try {
         const page = await window.gitspynx.readLog(info.value.path, commits.value.length, PAGE)
+        if (gen !== generation) return
         commits.value = [...commits.value, ...page]
         complete.value = page.length < PAGE
       } finally {
-        loading.value = false
+        if (gen === generation) loading.value = false
       }
     })
 
@@ -63,14 +91,67 @@ export const useRepo = defineStore('repo', () => {
     guard(async () => {
       if (!info.value) return
       selected.value = sha
+      if (sha === WIP) return
       const d = await window.gitspynx.readCommit(info.value.path, sha)
       if (selected.value === sha) detail.value = d // ignore stale responses
     })
 
-  const close = () => {
-    info.value = null
-    commits.value = []
+  const refreshStatus = () =>
+    guard(async () => {
+      if (!info.value) return
+      status.value = await window.gitspynx.readStatus(info.value.path)
+      if (diffTarget.value && !('sha' in diffTarget.value)) await openDiff(diffTarget.value)
+    })
+
+  const openDiff = (target: DiffTarget) =>
+    guard(async () => {
+      if (!info.value) return
+      diffTarget.value = target
+      const d = await window.gitspynx.readFileDiff(info.value.path, target)
+      if (diffTarget.value === target) diff.value = d
+    })
+
+  const closeDiff = () => {
+    diffTarget.value = null
+    diff.value = null
   }
 
-  return { info, commits, complete, loading, error, selected, detail, graph, refsBySha, open, loadMore, select, close }
+  const stage = (paths: string[]) =>
+    guard(async () => {
+      await window.gitspynx.stage(info.value!.path, paths)
+      await refreshStatus()
+    })
+
+  const unstage = (paths: string[]) =>
+    guard(async () => {
+      await window.gitspynx.unstage(info.value!.path, paths)
+      await refreshStatus()
+    })
+
+  async function commit(message: string, amend: boolean): Promise<boolean> {
+    error.value = null
+    try {
+      await window.gitspynx.commit(info.value!.path, message, amend)
+      closeDiff()
+      await refresh()
+      return true
+    } catch (e) {
+      report(e)
+      return false
+    }
+  }
+
+  const close = () => {
+    generation++
+    loading.value = false
+    info.value = null
+    commits.value = []
+    status.value = []
+    closeDiff()
+  }
+
+  return {
+    info, commits, complete, loading, error, selected, detail, status, staged, unstaged, diffTarget, diff,
+    graph, refsBySha, open, refresh, loadMore, select, refreshStatus, openDiff, closeDiff, stage, unstage, commit, close
+  }
 })
