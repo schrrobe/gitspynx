@@ -45,6 +45,7 @@ export interface ConflictVersions {
   ours: string | null
   theirs: string | null
   merged: string | null // work tree file with conflict markers
+  binary: boolean // resolve by choosing a side only
 }
 
 export type Resolution = { content: string } | { side: 'ours' | 'theirs' }

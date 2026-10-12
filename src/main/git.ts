@@ -26,8 +26,9 @@ export function run(args: string[], cwd: string, okCodes = [0], stdin?: string, 
     const child = spawn('git', ['--no-optional-locks', ...args], {
       cwd,
       detached: timeout > 0 && process.platform !== 'win32', // own process group for the timer
-      // English messages for the few checks that match git output; hooks inherit only this
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', LC_MESSAGES: 'C' }
+      // English messages for the few checks that match git output; never wait for an editor
+      // (continue keeps the prepared message). Hooks inherit only these.
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', LC_MESSAGES: 'C', GIT_EDITOR: 'true' }
     })
     const out: Buffer[] = []
     const err: Buffer[] = []
@@ -218,8 +219,9 @@ export async function pull(repo: string, mode: PullMode): Promise<void> {
   const upstream = await run(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'], repo, [0, 128])
   if (upstream.code !== 0) throw new GitError('the current branch has no upstream branch')
   await run(['fetch', '--quiet'], repo, [0], undefined, NETWORK_TIMEOUT)
+  // No explicit upstream argument: git then uses it with --fork-point, exactly like `git pull`.
   const integrate = { 'ff-only': ['merge', '--ff-only'], rebase: ['rebase'], merge: ['merge', '--no-edit'] }[mode]
-  await run([...integrate, '@{upstream}'], repo)
+  await run(integrate, repo)
 }
 
 async function remotes(repo: string): Promise<string[]> {
@@ -286,13 +288,18 @@ export async function currentOperation(repo: string): Promise<Operation | null> 
   return i === -1 ? null : OPERATION_MARKERS[i][1]
 }
 
-// Runs a command that may stop on conflicts: 'conflicts' if it left unmerged paths, else rethrows.
+const hasUnmerged = async (repo: string) => (await run(['ls-files', '-u'], repo)).stdout !== ''
+
+// Runs a command that may stop on conflicts. 'conflicts' only if this command produced them (or
+// started an operation that now waits); a refusal with conflicts already present is an error.
 async function mayConflict(repo: string, args: string[]): Promise<'ok' | 'conflicts'> {
+  const [unmergedBefore, opBefore] = await Promise.all([hasUnmerged(repo), currentOperation(repo)])
   try {
     await run(args, repo)
     return 'ok'
   } catch (e) {
-    if ((await run(['ls-files', '-u'], repo)).stdout) return 'conflicts'
+    const [unmergedAfter, opAfter] = await Promise.all([hasUnmerged(repo), currentOperation(repo)])
+    if ((unmergedAfter && !unmergedBefore) || (opAfter && !opBefore)) return 'conflicts'
     throw e
   }
 }
@@ -319,16 +326,15 @@ async function assertRef(repo: string, rev: string): Promise<void> {
   await assertBranchName(repo, rev)
 }
 
-const NO_EDITOR = ['-c', 'core.editor=true'] // keep the prepared message, never open an editor
-
 export async function continueOperation(repo: string): Promise<'ok' | 'conflicts'> {
   const op = await currentOperation(repo)
   if (!op) throw new GitError('no operation in progress')
-  if (op === 'merge') return mayConflict(repo, [...NO_EDITOR, 'commit', '--no-edit'])
-  // A commit whose resolution matches HEAD leaves nothing to commit: skip it like git suggests.
-  const nothingStaged = (await run(['diff', '--cached', '--quiet'], repo, [0, 1])).code === 0
-  if (nothingStaged && !(await run(['ls-files', '-u'], repo)).stdout) return mayConflict(repo, [op, '--skip'])
-  return mayConflict(repo, [...NO_EDITOR, op, '--continue'])
+  if (op === 'merge') return mayConflict(repo, ['commit', '--no-edit'])
+  // A step whose resolution matches HEAD leaves nothing to commit: skip it like git suggests, but
+  // only if index and work tree both equal HEAD — `rebase --skip` resets the work tree.
+  const cleanAtHead = (await run(['diff', '--quiet', 'HEAD'], repo, [0, 1])).code === 0
+  if (cleanAtHead && !(await hasUnmerged(repo))) return mayConflict(repo, [op, '--skip'])
+  return mayConflict(repo, [op, '--continue'])
 }
 
 export async function abortOperation(repo: string): Promise<void> {
@@ -356,15 +362,22 @@ async function indexStage(repo: string, n: 1 | 2 | 3, path: string): Promise<str
   return code === 0 ? stdout : null
 }
 
+async function stages(repo: string, path: string) {
+  const [base, ours, theirs] = await Promise.all([1, 2, 3].map((n) => indexStage(repo, n as 1 | 2 | 3, path)))
+  const versions = [base, ours, theirs]
+  return {
+    base,
+    ours,
+    theirs,
+    binary: versions.some((v) => v?.includes('\0')), // same heuristic git uses
+    crlf: versions.some((v) => v?.includes('\r\n'))
+  }
+}
+
 export async function readConflict(repo: string, path: string): Promise<ConflictVersions> {
   const full = await conflictedFile(repo, path)
-  const [base, ours, theirs, merged] = await Promise.all([
-    indexStage(repo, 1, path),
-    indexStage(repo, 2, path),
-    indexStage(repo, 3, path),
-    readFile(full, 'utf8').catch(() => null)
-  ])
-  return { base, ours, theirs, merged }
+  const [{ base, ours, theirs, binary }, merged] = await Promise.all([stages(repo, path), readFile(full, 'utf8').catch(() => null)])
+  return { base, ours, theirs, merged, binary }
 }
 
 export async function resolveConflict(repo: string, path: string, resolution: Resolution): Promise<void> {
@@ -372,7 +385,10 @@ export async function resolveConflict(repo: string, path: string, resolution: Re
   if ('content' in resolution) {
     const st = await lstat(full).catch(() => null)
     if (st?.isSymbolicLink()) throw new GitError(`refusing to write through a symlink: ${path}`)
-    await writeFile(full, resolution.content)
+    const { binary, crlf } = await stages(repo, path)
+    if (binary) throw new GitError(`binary file: choose a side instead of editing ${path}`)
+    // Text edited in the UI arrives with LF only; keep the file's CRLF style.
+    await writeFile(full, crlf ? resolution.content.replace(/\r?\n/g, '\r\n') : resolution.content)
   } else {
     await run([LITERAL, 'checkout', `--${resolution.side}`, '--', path], repo)
   }

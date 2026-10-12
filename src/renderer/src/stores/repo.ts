@@ -273,11 +273,19 @@ export const useRepo = defineStore('repo', () => {
     if (ok) await integrate((r) => window.gitspynx.rebase(r, rev))
   }
 
+  const OP_NAMES = { merge: 'Merge', rebase: 'Rebase', 'cherry-pick': 'Cherry-Pick', revert: 'Revert' }
+
   async function abortOp() {
     const op = info.value?.operation
-    if (await window.gitspynx.confirm(`${op ?? 'Operation'} abbrechen?`, 'Alle bisherigen Konfliktlösungen dieser Operation gehen verloren.', 'Abbrechen'))
-      await mutate((r) => window.gitspynx.abortOperation(r))
+    const name = op ? OP_NAMES[op] : 'Operation'
+    const ok = await window.gitspynx.confirm(
+      `${name} abbrechen?`,
+      'Der Stand vor dem Start wird wiederhergestellt; alle bisherigen Konfliktlösungen dieser Operation gehen verloren.',
+      `${name} abbrechen`
+    )
+    if (!ok) return
     conflict.value = null
+    await mutate((r) => window.gitspynx.abortOperation(r))
   }
 
   const openConflict = (path: string) =>

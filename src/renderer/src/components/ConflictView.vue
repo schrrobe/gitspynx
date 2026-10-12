@@ -16,7 +16,8 @@ const labels = computed(() =>
     ? { ours: 'Basis des Rebase (Ziel-Branch)', theirs: 'Dein Commit' }
     : { ours: `Aktueller Stand (${repo.info?.head.branch ?? 'HEAD'})`, theirs: 'Eingehende Änderung' }
 )
-const hasMarkers = computed(() => /^(<{7}|={7}|>{7})( |$)/m.test(result.value))
+const hasMarkers = computed(() => /^(<{7}|\|{7}|={7}|>{7})( |\r?$)/m.test(result.value))
+const binary = computed(() => repo.conflict?.versions.binary ?? false)
 </script>
 
 <template>
@@ -31,17 +32,18 @@ const hasMarkers = computed(() => /^(<{7}|={7}|>{7})( |$)/m.test(result.value))
           <span>{{ labels.ours }}</span>
           <button :disabled="repo.conflict.versions.ours === null" @click="repo.resolve({ side: 'ours' })">Übernehmen</button>
         </div>
-        <pre class="mono">{{ repo.conflict.versions.ours ?? '(Datei gelöscht)' }}</pre>
+        <pre class="mono">{{ binary ? '(Binärdatei)' : repo.conflict.versions.ours ?? '(Datei gelöscht)' }}</pre>
       </div>
       <div class="side">
         <div class="label">
           <span>{{ labels.theirs }}</span>
           <button :disabled="repo.conflict.versions.theirs === null" @click="repo.resolve({ side: 'theirs' })">Übernehmen</button>
         </div>
-        <pre class="mono">{{ repo.conflict.versions.theirs ?? '(Datei gelöscht)' }}</pre>
+        <pre class="mono">{{ binary ? '(Binärdatei)' : repo.conflict.versions.theirs ?? '(Datei gelöscht)' }}</pre>
       </div>
     </div>
-    <div class="result">
+    <div v-if="binary" class="result note dim">Binärdatei: bitte eine Seite übernehmen.</div>
+    <div v-else class="result">
       <div class="label">
         <span>Ergebnis</span>
         <span v-if="hasMarkers" class="warn">enthält noch Konfliktmarker</span>
@@ -74,5 +76,6 @@ textarea {
   outline: none;
 }
 .warn { color: var(--danger); font-weight: normal; }
+.note { padding: 16px; }
 .primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 </style>

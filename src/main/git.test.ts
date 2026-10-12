@@ -8,6 +8,7 @@ import {
   assertRevision,
   cherryPick,
   continueOperation,
+  currentOperation,
   merge,
   readConflict,
   rebase,
@@ -414,6 +415,23 @@ describe('remotes', () => {
     expect(at(remote, 'log', '-1', '--format=%s', 'main')).toBe('colleague work')
   })
 
+  it('pulls with rebase like git pull --rebase after an upstream force-push', async () => {
+    at(a, 'switch', '-q', 'main')
+    at(a, 'pull', '-q', '--rebase')
+    at(a, 'push', '-q')
+    at(b, 'fetch', '-q')
+    at(b, 'switch', '-q', 'main')
+    at(b, 'reset', '-q', '--hard', 'origin/main')
+    at(b, 'commit', '-q', '--allow-empty', '-m', 'u3')
+    at(b, 'push', '-q')
+    at(a, 'pull', '-q', '--rebase')
+    at(a, 'commit', '-q', '--allow-empty', '-m', 'mine')
+    at(b, 'commit', '-q', '--amend', '--allow-empty', '-m', 'u3-rewritten')
+    at(b, 'push', '-q', '--force')
+    await pull(a, 'rebase')
+    expect(at(a, 'log', '-3', '--format=%s').split('\n')).toEqual(['mine', 'u3-rewritten', at(b, 'log', '-1', '--format=%s', 'HEAD~1')])
+  })
+
   it('deletes a branch on the remote', async () => {
     await deleteRemoteBranch(a, 'origin/topic')
     expect(at(remote, 'branch', '--list', 'topic')).toBe('')
@@ -521,19 +539,98 @@ describe('merge, rebase, cherry-pick and conflicts', () => {
     expect(m('log', '-1', '--format=%s')).toBe('main-change')
   })
 
+  it('never discards unstaged work when continuing a rebase', async () => {
+    write('g.txt', 'g0\n')
+    m('add', 'g.txt')
+    m('commit', '-q', '-m', 'add g')
+    m('switch', '-q', 'side')
+    expect(await rebase(md, 'main')).toBe('conflicts')
+    await resolveConflict(md, 'f.txt', { side: 'ours' }) // resolution equals HEAD: commit becomes empty
+    write('g.txt', 'precious edit\n') // tracked file edited while stopped, not staged
+    await continueOperation(md).catch(() => {})
+    expect(readFileSync(join(md, 'g.txt'), 'utf8')).toBe('precious edit\n')
+    m('checkout', '--', 'g.txt')
+    if ((await openRepo(md)).operation) await abortOperation(md)
+    m('switch', '-q', 'main')
+    m('reset', '-q', '--hard', 'HEAD~1')
+  })
+
+  it('reports a refused operation as an error, not as conflicts', async () => {
+    expect(await merge(md, 'side')).toBe('conflicts')
+    await expect(cherryPick(md, m('rev-parse', 'clean'))).rejects.toBeInstanceOf(GitError)
+    await abortOperation(md)
+  })
+
+  it('continues even when GIT_EDITOR points to a failing editor', async () => {
+    const saved = process.env.GIT_EDITOR
+    process.env.GIT_EDITOR = 'false'
+    try {
+      m('switch', '-q', 'side')
+      expect(await rebase(md, 'main')).toBe('conflicts')
+      await resolveConflict(md, 'f.txt', { content: 'one\nBOTH\nthree\n' })
+      expect(await continueOperation(md)).toBe('ok')
+      expect((await openRepo(md)).operation).toBeNull()
+    } finally {
+      if (saved === undefined) delete process.env.GIT_EDITOR
+      else process.env.GIT_EDITOR = saved
+      if (await currentOperation(md)) await abortOperation(md)
+      else m('reset', '-q', '--hard', 'ORIG_HEAD')
+      m('switch', '-q', 'main')
+    }
+  })
+
+  it('flags binary conflicts and refuses text resolution for them', async () => {
+    m('switch', '-q', '-c', 'bin-a', 'main~1')
+    writeFileSync(join(md, 'img.bin'), Buffer.from([0x89, 0x50, 0x00, 0xff, 0x01]))
+    m('add', '.')
+    m('commit', '-q', '-m', 'bin a')
+    m('switch', '-q', '-c', 'bin-b', 'main~1')
+    writeFileSync(join(md, 'img.bin'), Buffer.from([0x89, 0x50, 0x00, 0xfe, 0x02]))
+    m('add', '.')
+    m('commit', '-q', '-m', 'bin b')
+    expect(await merge(md, 'bin-a')).toBe('conflicts')
+    expect((await readConflict(md, 'img.bin')).binary).toBe(true)
+    await expect(resolveConflict(md, 'img.bin', { content: 'x' })).rejects.toThrow(/binary/)
+    await resolveConflict(md, 'img.bin', { side: 'theirs' })
+    expect([...readFileSync(join(md, 'img.bin'))]).toEqual([0x89, 0x50, 0x00, 0xff, 0x01])
+    await abortOperation(md)
+    m('switch', '-q', 'main')
+  })
+
+  it('keeps CRLF line endings when resolving with edited text', async () => {
+    m('switch', '-q', '-c', 'crlf-a', 'main~1')
+    write('w.txt', 'a\r\nb\r\n')
+    m('add', '.')
+    m('commit', '-q', '-m', 'crlf a')
+    m('switch', '-q', '-c', 'crlf-b', 'main~1')
+    write('w.txt', 'a\r\nc\r\n')
+    m('add', '.')
+    m('commit', '-q', '-m', 'crlf b')
+    expect(await merge(md, 'crlf-a')).toBe('conflicts')
+    await resolveConflict(md, 'w.txt', { content: 'a\nbc\n' }) // textarea normalises to LF
+    expect(readFileSync(join(md, 'w.txt'), 'utf8')).toBe('a\r\nbc\r\n')
+    await abortOperation(md)
+    m('switch', '-q', 'main')
+  })
+
   it('only resolves paths that are actually in conflict', async () => {
     await expect(resolveConflict(md, 'f.txt', { content: 'overwritten' })).rejects.toThrow(/not in conflict/)
     expect(m('status', '--porcelain')).toBe('')
   })
 
   it('refuses to write conflict content through a symlink', async () => {
+    const target = join(tmpdir(), `gitspynx-symlink-target-${process.pid}`)
     expect(await merge(md, 'side')).toBe('conflicts')
-    rmSync(join(md, 'f.txt'))
-    symlinkSync('/tmp/gitspynx-should-not-exist', join(md, 'f.txt'))
-    await expect(resolveConflict(md, 'f.txt', { content: 'x' })).rejects.toThrow(/symlink/)
-    expect(existsSync('/tmp/gitspynx-should-not-exist')).toBe(false)
-    rmSync(join(md, 'f.txt'))
-    await abortOperation(md)
+    try {
+      rmSync(join(md, 'f.txt'))
+      symlinkSync(target, join(md, 'f.txt'))
+      await expect(resolveConflict(md, 'f.txt', { content: 'x' })).rejects.toThrow(/symlink/)
+      expect(existsSync(target)).toBe(false)
+    } finally {
+      rmSync(join(md, 'f.txt'), { force: true })
+      rmSync(target, { force: true })
+      await abortOperation(md)
+    }
   })
 
   it('refuses to resolve paths outside the repository', async () => {

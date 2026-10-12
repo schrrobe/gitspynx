@@ -13,9 +13,9 @@ const conflicts = computed(() => repo.status.filter((f) => f.conflicted).length)
     <span v-if="conflicts" class="warn">{{ conflicts }} {{ conflicts === 1 ? 'Konflikt' : 'Konflikte' }} offen</span>
     <span v-else class="dim">Alle Konflikte gelöst</span>
     <span class="spacer" />
-    <button class="primary" :disabled="conflicts > 0" @click="repo.continueOp()">Fortsetzen</button>
-    <button v-if="repo.info.operation !== 'merge'" @click="repo.skipOp()">Commit überspringen</button>
-    <button @click="repo.abortOp()">Abbrechen</button>
+    <button class="primary" :disabled="conflicts > 0 || !!repo.busy" @click="repo.continueOp()">Fortsetzen</button>
+    <button v-if="repo.info.operation !== 'merge'" :disabled="!!repo.busy" @click="repo.skipOp()">Commit überspringen</button>
+    <button :disabled="!!repo.busy" @click="repo.abortOp()">{{ NAMES[repo.info.operation] }} abbrechen</button>
   </div>
 </template>
 

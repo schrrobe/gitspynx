@@ -291,13 +291,18 @@ describe('repo store', () => {
       expect(repo.selected).toBe(WIP)
     })
 
-    it('asks before aborting and does nothing when declined', async () => {
+    it('asks before aborting and keeps everything when declined', async () => {
       const { repo, w } = await opened()
       let aborted = false
-      w.gitspynx.confirm = async () => false
+      let okLabel = ''
+      w.gitspynx.confirm = async (_m: string, _d: string, ok: string) => ((okLabel = ok), false)
       w.gitspynx.abortOperation = async () => void (aborted = true)
+      w.gitspynx.readConflict = async () => ({ base: 'b', ours: 'o', theirs: 't', merged: 'm', binary: false })
+      await repo.openConflict('f.txt')
       await repo.abortOp()
       expect(aborted).toBe(false)
+      expect(repo.conflict).not.toBeNull() // edits in the conflict view survive a declined abort
+      expect(okLabel).not.toBe('Abbrechen') // must differ from the dialog's cancel button
     })
 
     it('resolves a conflict and closes the conflict view', async () => {

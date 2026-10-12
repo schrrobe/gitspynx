@@ -12,7 +12,7 @@ async function menu(r: Ref) {
   const id = await window.gitspynx.showContextMenu([
     ...(branch ? [{ id: 'checkout', label: r.kind === 'remote' ? 'Als lokalen Branch auschecken' : 'Auschecken', enabled: !isHead(r) }] : []),
     { id: 'create', label: 'Branch hier erstellen…' },
-    ...(branch && !isHead(r) && head
+    ...(branch && !isHead(r) && head && !repo.info?.operation
       ? [
           { separator: true as const },
           { id: 'merge', label: `„${r.name}“ in „${head}“ mergen` },

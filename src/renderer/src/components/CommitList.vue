@@ -31,7 +31,7 @@ async function menu(sha: string) {
   const onHead = sha === repo.info?.head.sha
   const id = await window.gitspynx.showContextMenu([
     { id: 'create', label: 'Branch hier erstellen…' },
-    ...(head && !onHead
+    ...(head && !onHead && !repo.info?.operation
       ? [
           { separator: true as const },
           { id: 'cherry-pick', label: `Cherry-Pick auf „${head}“` },
