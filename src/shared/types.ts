@@ -1,3 +1,6 @@
+// Most commits one readLog call returns (a refresh re-reads what is loaded, up to this).
+export const MAX_LOG_PAGE = 50_000
+
 export interface Commit {
   sha: string
   parents: string[]

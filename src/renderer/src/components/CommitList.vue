@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { searchCommits } from '../search'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { nextHit as nextHitIndex, searchCommits } from '../search'
 import { useRepo, WIP } from '../stores/repo'
 import GraphCell from './GraphCell.vue'
 
@@ -71,13 +71,13 @@ const query = ref('')
 const searchInput = ref<HTMLInputElement>()
 const hits = computed(() => searchCommits(repo.commits, query.value))
 const hitSet = computed(() => new Set(hits.value))
-const current = ref(-1)
-watch(hits, () => (current.value = -1))
+// Position is derived from the selection, so paging or refreshing history never resets it.
+const selectedIndex = computed(() => repo.commits.findIndex((c) => c.sha === repo.selected))
+const position = computed(() => hits.value.indexOf(selectedIndex.value))
 
-function nextHit(delta: number) {
-  if (!hits.value.length) return
-  current.value = (current.value + delta + hits.value.length) % hits.value.length
-  const index = hits.value[current.value]
+function nextHit(delta: 1 | -1) {
+  const index = nextHitIndex(hits.value, selectedIndex.value, delta)
+  if (index === -1) return
   repo.select(repo.commits[index].sha)
   reveal(index)
 }
@@ -107,7 +107,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
       @keydown.esc="query = ''"
     />
     <template v-if="query.trim()">
-      <span class="dim count">{{ hits.length ? `${current + 1 || '–'}/${hits.length}` : 'keine Treffer' }}</span>
+      <span class="dim count">{{ hits.length ? `${position + 1 || '–'}/${hits.length}` : 'keine Treffer' }}</span>
       <button :disabled="!hits.length" aria-label="Vorheriger Treffer" @click="nextHit(-1)">↑</button>
       <button :disabled="!hits.length" aria-label="Nächster Treffer" @click="nextHit(1)">↓</button>
       <button v-if="!repo.complete" :disabled="repo.loading" :title="`Nur ${repo.commits.length} geladene Commits durchsucht`" @click="repo.loadAll()">

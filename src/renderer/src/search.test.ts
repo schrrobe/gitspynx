@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { searchCommits } from './search'
+import { nextHit, searchCommits } from './search'
 
 const commits = [
   { sha: 'abc1234def', parents: [], author: 'Ada Lovelace', email: 'ada@example.com', date: 0, subject: 'Fix login bug' },
@@ -28,5 +28,24 @@ describe('searchCommits', () => {
 
   it('returns nothing for a blank query', () => {
     expect(searchCommits(commits, '   ')).toEqual([])
+  })
+})
+
+describe('nextHit', () => {
+  it('walks from the selected row to the next or previous hit, wrapping around', () => {
+    expect(nextHit([2, 5, 9], 5, 1)).toBe(9)
+    expect(nextHit([2, 5, 9], 9, 1)).toBe(2)
+    expect(nextHit([2, 5, 9], 5, -1)).toBe(2)
+    expect(nextHit([2, 5, 9], 2, -1)).toBe(9)
+  })
+
+  it('starts from the selection even when it is not a hit', () => {
+    expect(nextHit([2, 5, 9], 3, 1)).toBe(5)
+    expect(nextHit([2, 5, 9], 3, -1)).toBe(2)
+    expect(nextHit([2, 5, 9], -1, 1)).toBe(2)
+  })
+
+  it('returns -1 without hits', () => {
+    expect(nextHit([], 3, 1)).toBe(-1)
   })
 })

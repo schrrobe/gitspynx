@@ -1,6 +1,7 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { Commit, RepoInfo } from '../../../shared/types'
+import { MAX_LOG_PAGE } from '../../../shared/types'
 import { useRepo, WIP } from './repo'
 
 const info: RepoInfo = { path: '/r', head: { branch: 'main', sha: 'a0' }, refs: [], tips: ['a0'], operation: null, stashes: [] }
@@ -389,6 +390,69 @@ describe('repo store', () => {
       expect(tipsSeen.at(-1)).toEqual(['t0'])
       await repo.resetFilters()
       expect(tipsSeen.at(-1)).toBeUndefined()
+    })
+  })
+
+  describe('review 4', () => {
+    const w = () => (globalThis as unknown as { window: { gitspynx: Record<string, unknown> } }).window
+
+    it('caps how many commits a refresh re-reads', async () => {
+      const repo = useRepo()
+      const first = repo.open('/r')
+      await flush()
+      logCalls[0].d.resolve(page('c', 2000))
+      await first
+      repo.commits = page('big', MAX_LOG_PAGE + 5000)
+      let limit = 0
+      w().gitspynx.readLog = async (_r: string, _s: number, l: number) => ((limit = l), page('c', 10))
+      await repo.refresh()
+      expect(limit).toBe(MAX_LOG_PAGE)
+    })
+
+    it('resets branch filters when another repository is opened', async () => {
+      const repo = useRepo()
+      const first = repo.open('/r')
+      await flush()
+      logCalls[0].d.resolve(page('c', 3))
+      await first
+      w().gitspynx.readLog = async () => page('c', 3)
+      await repo.toggleSolo('refs/heads/main')
+      w().gitspynx.openRepo = async () => ({ ...info, path: '/other' })
+      await repo.open('/other')
+      expect(repo.solo).toBeNull()
+      expect(repo.hidden.size).toBe(0)
+    })
+
+    it('hides the upstream together with a local branch', async () => {
+      const repo = useRepo()
+      w().gitspynx.openRepo = async () => ({
+        ...info,
+        refs: [
+          { name: 'topic', fullName: 'refs/heads/topic', kind: 'local', target: 't0', upstream: 'origin/topic' },
+          { name: 'origin/topic', fullName: 'refs/remotes/origin/topic', kind: 'remote', target: 't0' }
+        ]
+      })
+      const first = repo.open('/r')
+      await flush()
+      logCalls[0].d.resolve(page('c', 3))
+      await first
+      w().gitspynx.readLog = async () => page('c', 3)
+      await repo.toggleHidden('refs/heads/topic')
+      expect([...repo.hidden].sort()).toEqual(['refs/heads/topic', 'refs/remotes/origin/topic'])
+      await repo.toggleHidden('refs/heads/topic')
+      expect(repo.hidden.size).toBe(0)
+    })
+
+    it('tells the user that a conflicting pop kept the stash', async () => {
+      const repo = useRepo()
+      const first = repo.open('/r')
+      await flush()
+      logCalls[0].d.resolve(page('c', 3))
+      await first
+      w().gitspynx.readLog = async () => page('c', 3)
+      w().gitspynx.stashApply = async () => 'conflicts'
+      await repo.applyStash('s1', true)
+      expect(repo.notice).toMatch(/Stash wurde behalten/)
     })
   })
 })

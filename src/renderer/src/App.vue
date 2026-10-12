@@ -72,6 +72,7 @@ async function pick() {
       <span class="dim">{{ repo.info.head.branch ?? 'detached HEAD' }}</span>
       <span class="spacer" />
       <span v-if="repo.error" class="error" role="alert">{{ repo.error }}</span>
+      <span v-else-if="repo.notice" class="notice" role="status">{{ repo.notice }}</span>
       <div class="group" role="group" aria-label="Remote">
         <button :disabled="!!repo.busy" @click="repo.fetchAll()">{{ repo.busy === 'fetch' ? 'Fetch…' : 'Fetch' }}</button>
         <button :disabled="!!repo.busy || !repo.info.head.branch" title="Rechtsklick: Pull-Modus wählen" @click="repo.pullBranch()" @contextmenu.prevent="pullMenu">
@@ -108,6 +109,7 @@ async function pick() {
 .welcome li { padding: 4px 0; }
 .welcome a { color: var(--accent); text-decoration: none; word-break: break-all; }
 .error { color: var(--danger); }
+.notice { color: var(--lane-1); }
 .shell {
   display: grid;
   grid-template: 'bar bar bar' 44px 'op op op' auto 'side list detail' 1fr / 220px 1fr 340px;

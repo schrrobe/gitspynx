@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu } from 'electron'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { DiffTarget, GitspynxApi, MenuItem, RepoChange, Resolution } from '../shared/types'
+import { type DiffTarget, type GitspynxApi, MAX_LOG_PAGE, type MenuItem, type RepoChange, type Resolution } from '../shared/types'
 import {
   abortOperation,
   checkout,
@@ -163,7 +163,7 @@ const handlers: Handlers = {
     // a filter may only narrow the snapshot taken at open
     if (tips !== undefined && !Array.isArray(tips)) throw new GitError('invalid argument')
     const chosen = tips === undefined ? snapshot : snapshot.filter((t) => tips.includes(t))
-    return readLog(path, chosen, int(skip, 1e7), int(limit, 10000))
+    return readLog(path, chosen, int(skip, 1e7), int(limit, MAX_LOG_PAGE))
   },
   readCommit: (_s, repo, sha) => readCommit(knownRepo(repo), str(sha)),
   readStatus: (_s, repo) => readStatus(knownRepo(repo)),

@@ -24,7 +24,11 @@ async function menu(r: Ref) {
       : []),
     ...(r.kind === 'remote' ? [{ separator: true as const }, { id: 'delete-remote', label: 'Auf Remote löschen…' }] : []),
     { separator: true },
-    { id: 'hide', label: repo.hidden.has(r.fullName) ? 'Wieder einblenden' : 'Im Graph ausblenden', enabled: !isHead(r) },
+    {
+      id: 'hide',
+      label: repo.hidden.has(r.fullName) ? 'Wieder einblenden' : r.kind === 'local' && r.upstream ? `Im Graph ausblenden (mit ${r.upstream})` : 'Im Graph ausblenden',
+      enabled: !isHead(r)
+    },
     { id: 'solo', label: repo.solo === r.fullName ? 'Solo beenden' : 'Nur diesen Branch zeigen (Solo)' }
   ])
   if (id === 'checkout') repo.checkoutBranch(r.name)

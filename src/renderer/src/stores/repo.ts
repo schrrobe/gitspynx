@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref, shallowRef } from 'vue'
-import type { Commit, CommitDetail, ConflictVersions, DiffTarget, FileDiff, FileStatus, RepoInfo, Resolution } from '../../../shared/types'
+import { type Commit, type CommitDetail, type ConflictVersions, type DiffTarget, type FileDiff, type FileStatus, MAX_LOG_PAGE, type RepoInfo, type Resolution } from '../../../shared/types'
 import { layoutGraph } from '../graph/layout'
 import { ask } from '../prompt'
 
@@ -13,6 +13,7 @@ export const useRepo = defineStore('repo', () => {
   const complete = ref(false)
   const loading = ref(false)
   const error = ref<string | null>(null)
+  const notice = ref<string | null>(null) // non-error information for the toolbar
   const selected = ref<string | null>(null)
   const detail = ref<CommitDetail | null>(null)
   const status = ref<FileStatus[]>([])
@@ -40,6 +41,7 @@ export const useRepo = defineStore('repo', () => {
 
   async function guard(fn: () => Promise<void>) {
     error.value = null
+    notice.value = null
     try {
       await fn()
     } catch (e) {
@@ -66,8 +68,13 @@ export const useRepo = defineStore('repo', () => {
       loading.value = true
       try {
         const next = await window.gitspynx.openRepo(path)
+        if (next.path !== info.value?.path) {
+          hidden.value = new Set() // filters belong to the repository they were set in
+          solo.value = null
+        }
+        const limit = Math.min(Math.max(PAGE, keepCount), MAX_LOG_PAGE)
         const [first, files] = await Promise.all([
-          window.gitspynx.readLog(next.path, 0, Math.max(PAGE, keepCount), tipsFor(next)),
+          window.gitspynx.readLog(next.path, 0, limit, tipsFor(next)),
           window.gitspynx.readStatus(next.path)
         ])
         if (gen !== generation) return
@@ -75,7 +82,7 @@ export const useRepo = defineStore('repo', () => {
         info.value = next
         commits.value = first
         status.value = files
-        complete.value = first.length < Math.max(PAGE, keepCount)
+        complete.value = first.length < limit
         if (!samePath) {
           selected.value = null
           detail.value = null
@@ -266,10 +273,11 @@ export const useRepo = defineStore('repo', () => {
   }
 
   // Merge/rebase/cherry-pick: on conflicts show the working directory where they get resolved.
-  async function integrate(op: (repo: string) => Promise<'ok' | 'conflicts'>) {
+  async function integrate(op: (repo: string) => Promise<'ok' | 'conflicts'>): Promise<boolean> {
     let result = 'ok' as 'ok' | 'conflicts' // assigned inside the callback
     await mutate(async (r) => void (result = await op(r)))
     if (result === 'conflicts') await select(WIP)
+    return result === 'conflicts'
   }
 
   const mergeInto = (rev: string) => integrate((r) => window.gitspynx.merge(r, rev))
@@ -303,7 +311,10 @@ export const useRepo = defineStore('repo', () => {
   }
 
   const stash = (message = '') => mutate((r) => window.gitspynx.stashPush(r, message))
-  const applyStash = (sha: string, pop: boolean) => integrate((r) => window.gitspynx.stashApply(r, sha, pop))
+  async function applyStash(sha: string, pop: boolean) {
+    const conflicted = await integrate((r) => window.gitspynx.stashApply(r, sha, pop))
+    if (conflicted && pop) notice.value = 'Konflikte beim Anwenden – der Stash wurde behalten. Nach dem Lösen kann er gelöscht werden.'
+  }
 
   async function popLatestStash() {
     const latest = info.value?.stashes[0]
@@ -335,9 +346,14 @@ export const useRepo = defineStore('repo', () => {
   // Filters change which tips the log walks, so history is reloaded from the start.
   const reloadFiltered = () => info.value && open(info.value.path)
 
+  // Hiding a local branch also hides its upstream; otherwise the usual case (origin/x at the same
+  // commit) would keep the history visible.
   function toggleHidden(fullName: string) {
+    const ref = info.value?.refs.find((r) => r.fullName === fullName)
+    const names = [fullName, ...(ref?.kind === 'local' && ref.upstream ? [`refs/remotes/${ref.upstream}`] : [])]
     const next = new Set(hidden.value)
-    if (!next.delete(fullName)) next.add(fullName)
+    if (next.has(fullName)) names.forEach((n) => next.delete(n))
+    else names.forEach((n) => next.add(n))
     hidden.value = next
     return reloadFiltered()
   }
@@ -375,7 +391,7 @@ export const useRepo = defineStore('repo', () => {
   }
 
   return {
-    info, commits, complete, loading, error, selected, detail, status, staged, unstaged, diffTarget, diff, unstageFiles,
+    info, commits, complete, loading, error, notice, selected, detail, status, staged, unstaged, diffTarget, diff, unstageFiles,
     graph, refsBySha, open, refresh, loadMore, select, refreshStatus, openDiff, closeDiff, stage, unstage, commit, close,
     checkoutBranch, createBranch, renameBranch, deleteBranch, busy, fetchAll, pullBranch, pushBranch, deleteRemoteBranch,
     conflict, mergeInto, rebaseOnto, cherryPick, continueOp, skipOp, abortOp, openConflict, resolve,

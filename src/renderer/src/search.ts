@@ -12,3 +12,11 @@ export function searchCommits(commits: Commit[], query: string): number[] {
   })
   return hits
 }
+
+// Row index of the next (delta 1) or previous (-1) hit relative to the selected row, wrapping.
+// Derived from the selection so reloading or paging history never loses the position.
+export function nextHit(hits: number[], selected: number, delta: 1 | -1): number {
+  if (!hits.length) return -1
+  if (delta === 1) return hits.find((i) => i > selected) ?? hits[0]
+  return [...hits].reverse().find((i) => i < selected && selected !== -1) ?? hits[hits.length - 1]
+}
