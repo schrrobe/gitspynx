@@ -18,6 +18,7 @@ const methods: (keyof GitspynxApi)[] = [
   'stage',
   'unstage',
   'readFileDiff',
+  'stageHunk',
   'commit',
   'createBranch',
   'checkout',

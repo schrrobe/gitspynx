@@ -97,7 +97,7 @@ export function parseStatus(out: string): FileStatus[] {
 }
 
 export function parseDiff(out: string): FileDiff {
-  const diff: FileDiff = { binary: false, hunks: [] }
+  const diff: FileDiff = { binary: false, header: [], hunks: [] }
   let oldNo = 0
   let newNo = 0
   for (const line of out.split('\n')) {
@@ -111,9 +111,15 @@ export function parseDiff(out: string): FileDiff {
     const current = diff.hunks.at(-1)
     if (!current) {
       if (line.startsWith('Binary files ')) diff.binary = true
+      else if (line) diff.header.push(line)
       continue
     }
     const type = line[0]
+    if (type === '\\') {
+      const last = current.lines.at(-1)
+      if (last) last.noEol = true
+      continue
+    }
     if (type === ' ') current.lines.push({ type, text: line.slice(1), oldNo: oldNo++, newNo: newNo++ })
     else if (type === '-') current.lines.push({ type, text: line.slice(1), oldNo: oldNo++, newNo: null })
     else if (type === '+') current.lines.push({ type, text: line.slice(1), oldNo: null, newNo: newNo++ })

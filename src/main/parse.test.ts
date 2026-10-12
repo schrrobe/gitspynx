@@ -100,6 +100,7 @@ describe('parseDiff', () => {
     ].join('\n')
     expect(parseDiff(out)).toEqual({
       binary: false,
+      header: ['diff --git a/f.txt b/f.txt', 'index 111..222 100644', '--- a/f.txt', '+++ b/f.txt'],
       hunks: [
         {
           header: '@@ -1,3 +1,3 @@ heading',
@@ -115,7 +116,7 @@ describe('parseDiff', () => {
           lines: [
             { type: ' ', text: 'a', oldNo: 10, newNo: 10 },
             { type: '+', text: 'b', oldNo: null, newNo: 11 },
-            { type: ' ', text: 'c', oldNo: 11, newNo: 12 }
+            { type: ' ', text: 'c', oldNo: 11, newNo: 12, noEol: true }
           ]
         }
       ]
@@ -124,6 +125,6 @@ describe('parseDiff', () => {
 
   it('flags binary files', () => {
     const out = 'diff --git a/x.png b/x.png\nindex 1..2 100644\nBinary files a/x.png and b/x.png differ\n'
-    expect(parseDiff(out)).toEqual({ binary: true, hunks: [] })
+    expect(parseDiff(out)).toEqual({ binary: true, header: ['diff --git a/x.png b/x.png', 'index 1..2 100644'], hunks: [] })
   })
 })

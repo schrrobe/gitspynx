@@ -2,7 +2,8 @@ import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { lstat, readFile, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve, sep } from 'node:path'
-import type { Commit, CommitDetail, ConflictVersions, DiffTarget, FileDiff, FileStatus, Operation, RepoInfo, Resolution } from '../shared/types'
+import type { Commit, CommitDetail, ConflictVersions, DiffTarget, FileDiff, FileStatus, HunkSelection, Operation, RepoInfo, Resolution } from '../shared/types'
+import { buildPatch } from './patch'
 import { LOG_FORMAT, parseDiff, parseLog, parseNameStatus, parseRefs, parseStatus, REF_FORMAT } from './parse'
 
 export class GitError extends Error {
@@ -422,4 +423,21 @@ export async function stashApply(repo: string, sha: string, pop: boolean): Promi
 
 export async function stashDrop(repo: string, sha: string): Promise<void> {
   await run(['stash', 'drop', await stashRef(repo, sha)], repo)
+}
+
+// Stages (from the unstaged diff) or unstages (from the staged diff, applied in reverse) one hunk
+// or some of its lines. The patch is rebuilt here from the current diff; the renderer only names
+// the hunk, and a changed hunk header means the user looked at an outdated diff.
+export async function stageHunk(repo: string, sel: HunkSelection): Promise<void> {
+  if (!sel.staged && !(await run([LITERAL, 'ls-files', '--', sel.path], repo)).stdout)
+    throw new GitError('untracked files can only be staged as a whole')
+  const diff = await readFileDiff(repo, { path: sel.path, staged: sel.staged })
+  if (diff.hunks[sel.hunk]?.header !== sel.hunkHeader) throw new GitError('the diff changed meanwhile — please review it again')
+  let patch: string
+  try {
+    patch = buildPatch(diff, sel.hunk, sel.lines, sel.staged)
+  } catch (e) {
+    throw new GitError((e as Error).message)
+  }
+  await run(['apply', '--cached', '--recount', ...(sel.staged ? ['--reverse'] : []), '-'], repo, [0], patch)
 }

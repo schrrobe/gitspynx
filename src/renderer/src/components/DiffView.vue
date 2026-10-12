@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { keepSelection, type LineSelection } from '../diffSelection'
 import { useRepo } from '../stores/repo'
 
 const MAX_LINES = 5000 // ponytail: plain DOM rows, virtualize like CommitList if huge diffs matter
@@ -19,6 +20,34 @@ const hunks = computed(() => {
     return { header: h.header, lines }
   })
 })
+
+// Hunk/line staging for working-directory diffs of tracked files.
+const stageable = computed(() => {
+  const t = repo.diffTarget
+  if (!t || 'sha' in t || repo.diff?.binary) return false
+  return repo.status.find((f) => f.path === t.path)?.unstaged !== '?'
+})
+const staged = computed(() => !!repo.diffTarget && !('sha' in repo.diffTarget) && repo.diffTarget.staged)
+const selection = ref<LineSelection | null>(null)
+let anchor = -1
+watch(() => repo.diff, (next, prev) => (selection.value = keepSelection(selection.value, prev, next)))
+
+function toggleLine(hunk: number, line: number, type: string, range: boolean) {
+  if (!stageable.value || type === ' ') return
+  const current = selection.value?.hunk === hunk ? new Set(selection.value.lines) : new Set<number>()
+  if (range && anchor !== -1 && selection.value?.hunk === hunk) {
+    const lines = repo.diff!.hunks[hunk].lines
+    for (let i = Math.min(anchor, line); i <= Math.max(anchor, line); i++) if (lines[i].type !== ' ') current.add(i)
+  } else if (!current.delete(line)) current.add(line)
+  anchor = line
+  selection.value = current.size ? { hunk, lines: current } : null
+}
+
+function stageHunk(hunk: number, onlySelected: boolean) {
+  const header = repo.diff!.hunks[hunk].header
+  const lines = onlySelected && selection.value?.hunk === hunk ? [...selection.value.lines] : undefined
+  repo.stageHunk({ hunk, hunkHeader: header, lines })
+}
 
 // Esc closes the diff unless it belongs to a dialog or a text field.
 const onKey = (e: KeyboardEvent) => {
@@ -41,8 +70,22 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
     <div v-else-if="!repo.diff.hunks.length" class="note dim">Keine Änderungen.</div>
     <div v-else class="body mono">
       <template v-for="(h, i) in hunks" :key="i">
-        <div class="hunk dim">{{ h.header }}</div>
-        <div v-for="(l, j) in h.lines" :key="j" class="line" :class="{ add: l.type === '+', del: l.type === '-' }">
+        <div class="hunk">
+          <span class="dim">{{ h.header }}</span>
+          <template v-if="stageable">
+            <button v-if="selection?.hunk === i" :disabled="!!repo.busy" @click="stageHunk(i, true)">
+              {{ staged ? 'Zeilen unstagen' : 'Zeilen stagen' }} ({{ selection.lines.size }})
+            </button>
+            <button :disabled="!!repo.busy" @click="stageHunk(i, false)">{{ staged ? 'Hunk unstagen' : 'Hunk stagen' }}</button>
+          </template>
+        </div>
+        <div
+          v-for="(l, j) in h.lines"
+          :key="j"
+          class="line"
+          :class="{ add: l.type === '+', del: l.type === '-', pickable: stageable && l.type !== ' ', picked: selection?.hunk === i && selection.lines.has(j) }"
+          @click="toggleLine(i, j, l.type, $event.shiftKey)"
+        >
           <span class="no">{{ l.oldNo ?? '' }}</span>
           <span class="no">{{ l.newNo ?? '' }}</span>
           <span class="sign">{{ l.type === ' ' ? '' : l.type }}</span>
@@ -59,7 +102,11 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
 header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 12px; border-bottom: 1px solid var(--border); }
 header strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .body { flex: 1; overflow: auto; user-select: text; line-height: 20px; }
-.hunk { padding: 4px 12px; background: var(--bg-panel); border-block: 1px solid var(--border); }
+.hunk { display: flex; align-items: center; gap: 8px; padding: 3px 12px; background: var(--bg-panel); border-block: 1px solid var(--border); }
+.hunk span { flex: 1; }
+.hunk button { padding: 0 8px; font: 12px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+.line.pickable { cursor: pointer; }
+.line.picked { box-shadow: inset 3px 0 0 var(--accent); filter: brightness(1.12); }
 .line { display: flex; white-space: pre; min-width: max-content; }
 .line.add { background: color-mix(in srgb, var(--lane-2) 16%, transparent); }
 .line.del { background: color-mix(in srgb, var(--danger) 16%, transparent); }

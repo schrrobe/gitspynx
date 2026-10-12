@@ -75,6 +75,7 @@ export interface GitspynxApi {
   stage(repo: string, paths: string[]): Promise<void>
   unstage(repo: string, paths: string[]): Promise<void>
   readFileDiff(repo: string, target: DiffTarget): Promise<FileDiff>
+  stageHunk(repo: string, selection: HunkSelection): Promise<void>
   commit(repo: string, message: string, amend: boolean): Promise<void>
   createBranch(repo: string, name: string, start: string, switchTo: boolean): Promise<void>
   checkout(repo: string, branch: string): Promise<void>
@@ -122,11 +123,23 @@ export interface DiffLine {
   text: string
   oldNo: number | null
   newNo: number | null
+  noEol?: true // followed by "\ No newline at end of file"
 }
 
 export interface FileDiff {
   binary: boolean
+  header: string[] // file header lines before the first hunk (diff --git, index, ---, +++)
   hunks: { header: string; lines: DiffLine[] }[]
+}
+
+// A hunk (and optionally some of its lines) to stage from the unstaged diff, or to unstage from
+// the staged diff. hunkHeader guards against a diff that changed since it was displayed.
+export interface HunkSelection {
+  path: string
+  staged: boolean
+  hunk: number
+  hunkHeader: string
+  lines?: number[] // indexes into the hunk's lines; all changes when omitted
 }
 
 export type DiffTarget = { path: string; staged: boolean } | { path: string; sha: string }

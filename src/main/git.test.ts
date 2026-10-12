@@ -32,6 +32,7 @@ import {
   renameBranch,
   run,
   stage,
+  stageHunk,
   stashApply,
   stashDrop,
   stashPush,
@@ -710,5 +711,63 @@ describe('stashes', () => {
 
   it('refuses to stash when there is nothing to stash', async () => {
     await expect(stashPush(sd, '')).rejects.toThrow(/nothing to stash/)
+  })
+})
+
+describe('hunk and line staging', () => {
+  let hd: string
+  const h = (...args: string[]) => execFileSync('git', args, { cwd: hd, env }).toString()
+  const lines = (n: number, change: (i: number) => string | null = () => null) =>
+    Array.from({ length: n }, (_, i) => change(i) ?? `line ${i}`).join('\n') + '\n'
+
+  beforeAll(() => {
+    hd = mkdtempSync(join(tmpdir(), 'gitspynx-hunk-'))
+    h('init', '-q', '-b', 'main')
+    writeFileSync(join(hd, 'f.txt'), lines(30))
+    h('add', '.')
+    h('commit', '-q', '-m', 'base')
+  })
+  afterAll(() => rmSync(hd, { recursive: true, force: true }))
+  const reset = () => h('reset', '-q', '--hard')
+
+  it('stages one of two hunks', async () => {
+    writeFileSync(join(hd, 'f.txt'), lines(30, (i) => (i === 1 ? 'CHANGED 1' : i === 25 ? 'CHANGED 25' : null)))
+    const d = await readFileDiff(hd, { path: 'f.txt', staged: false })
+    expect(d.hunks).toHaveLength(2)
+    await stageHunk(hd, { path: 'f.txt', staged: false, hunk: 0, hunkHeader: d.hunks[0].header })
+    expect(h('diff', '--cached')).toContain('+CHANGED 1')
+    expect(h('diff', '--cached')).not.toContain('CHANGED 25')
+    expect(h('diff')).toContain('+CHANGED 25')
+    reset()
+  })
+
+  it('stages a single added line and unstages it again', async () => {
+    writeFileSync(join(hd, 'f.txt'), lines(30, (i) => (i === 10 ? 'line 10\nADD A\nADD B' : null)))
+    const d = await readFileDiff(hd, { path: 'f.txt', staged: false })
+    const idx = d.hunks[0].lines.findIndex((l) => l.text === 'ADD B')
+    await stageHunk(hd, { path: 'f.txt', staged: false, hunk: 0, hunkHeader: d.hunks[0].header, lines: [idx] })
+    expect(h('show', ':f.txt')).toContain('line 10\nADD B\nline 11')
+    expect(h('show', ':f.txt')).not.toContain('ADD A')
+    const s = await readFileDiff(hd, { path: 'f.txt', staged: true })
+    const sIdx = s.hunks[0].lines.findIndex((l) => l.text === 'ADD B')
+    await stageHunk(hd, { path: 'f.txt', staged: true, hunk: 0, hunkHeader: s.hunks[0].header, lines: [sIdx] })
+    expect(h('diff', '--cached')).toBe('')
+    expect(readFileSync(join(hd, 'f.txt'), 'utf8')).toContain('ADD A\nADD B') // work tree untouched
+    reset()
+  })
+
+  it('refuses when the diff changed since it was shown', async () => {
+    writeFileSync(join(hd, 'f.txt'), lines(30, (i) => (i === 3 ? 'X' : null)))
+    const d = await readFileDiff(hd, { path: 'f.txt', staged: false })
+    writeFileSync(join(hd, 'f.txt'), lines(30, (i) => (i === 3 ? 'X' : i === 4 ? 'Y' : null)))
+    await expect(stageHunk(hd, { path: 'f.txt', staged: false, hunk: 0, hunkHeader: d.hunks[0].header + 'x' })).rejects.toThrow(/changed/)
+    reset()
+  })
+
+  it('refuses line staging for untracked files', async () => {
+    writeFileSync(join(hd, 'new.txt'), 'a\nb\n')
+    const d = await readFileDiff(hd, { path: 'new.txt', staged: false })
+    await expect(stageHunk(hd, { path: 'new.txt', staged: false, hunk: 0, hunkHeader: d.hunks[0].header, lines: [0] })).rejects.toThrow(/untracked/)
+    rmSync(join(hd, 'new.txt'))
   })
 })

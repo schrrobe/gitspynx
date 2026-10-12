@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme } from 'electron'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { type DiffTarget, type GitspynxApi, MAX_LOG_PAGE, type MenuItem, type RepoChange, type Resolution, type Session } from '../shared/types'
+import { type DiffTarget, type GitspynxApi, type HunkSelection, MAX_LOG_PAGE, type MenuItem, type RepoChange, type Resolution, type Session } from '../shared/types'
 import {
   abortOperation,
   checkout,
@@ -29,6 +29,7 @@ import {
   resolveConflict,
   skipOperation,
   stage,
+  stageHunk,
   stashApply,
   stashDrop,
   stashPush,
@@ -96,6 +97,14 @@ function diffTarget(v: unknown): DiffTarget {
   if (t && typeof t.sha === 'string') return { path: str(t.path), sha: t.sha }
   if (t && typeof t.staged === 'boolean') return { path: str(t.path), staged: t.staged }
   throw new GitError('invalid argument')
+}
+
+function hunkSelection(v: unknown): HunkSelection {
+  const h = v as Record<string, unknown> | null
+  if (!h || typeof h.staged !== 'boolean' || typeof h.hunkHeader !== 'string') throw new GitError('invalid argument')
+  const lines = h.lines === undefined ? undefined : Array.isArray(h.lines) ? h.lines.map((n) => int(n, 1_000_000)) : null
+  if (lines === null) throw new GitError('invalid argument')
+  return { path: str(h.path), staged: h.staged, hunk: int(h.hunk, 100_000), hunkHeader: h.hunkHeader, lines }
 }
 
 function resolution(v: unknown): Resolution {
@@ -216,6 +225,7 @@ const handlers: Handlers = {
   stage: (_s, repo, p) => stage(knownRepo(repo), paths(p)),
   unstage: (_s, repo, p) => unstage(knownRepo(repo), paths(p)),
   readFileDiff: (_s, repo, target) => readFileDiff(knownRepo(repo), diffTarget(target)),
+  stageHunk: (_s, repo, sel) => stageHunk(knownRepo(repo), hunkSelection(sel)),
   commit: (_s, repo, message, amend) => commit(knownRepo(repo), str(message), amend === true),
   createBranch: (_s, repo, name, start, switchTo) => createBranch(knownRepo(repo), str(name), str(start), switchTo === true),
   checkout: (_s, repo, branch) => checkout(knownRepo(repo), str(branch)),

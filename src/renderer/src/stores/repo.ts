@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref, shallowRef } from 'vue'
-import { type Commit, type CommitDetail, type ConflictVersions, type DiffTarget, type FileDiff, type FileStatus, MAX_LOG_PAGE, type RepoInfo, type Resolution } from '../../../shared/types'
+import { type Commit, type CommitDetail, type ConflictVersions, type DiffTarget, type FileDiff, type FileStatus, type HunkSelection, MAX_LOG_PAGE, type RepoInfo, type Resolution } from '../../../shared/types'
 import { layoutGraph } from '../graph/layout'
 import { ask } from '../prompt'
 
@@ -199,6 +199,14 @@ export const useRepo = defineStore('repo', () => {
     guard(async () => {
       if (busy.value) return
       await window.gitspynx.unstage(info.value!.path, paths)
+      await refreshStatus()
+    })
+
+  const stageHunk = (sel: Omit<HunkSelection, 'path' | 'staged'>) =>
+    guard(async () => {
+      const t = diffTarget.value
+      if (busy.value || !info.value || !t || 'sha' in t) return
+      await window.gitspynx.stageHunk(info.value.path, { ...sel, path: t.path, staged: t.staged })
       await refreshStatus()
     })
 
@@ -424,6 +432,6 @@ export const useRepo = defineStore('repo', () => {
     graph, refsBySha, open, refresh, loadMore, select, refreshStatus, openDiff, closeDiff, stage, unstage, commit, close,
     checkoutBranch, createBranch, renameBranch, deleteBranch, busy, fetchAll, pullBranch, pushBranch, deleteRemoteBranch,
     conflict, mergeInto, rebaseOnto, cherryPick, continueOp, skipOp, abortOp, openConflict, resolve,
-    stash, applyStash, popLatestStash, dropStash, hidden, solo, toggleHidden, toggleSolo, resetFilters, loadAll
+    stash, applyStash, popLatestStash, dropStash, stageHunk, hidden, solo, toggleHidden, toggleSolo, resetFilters, loadAll
   }
 })
