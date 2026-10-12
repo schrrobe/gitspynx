@@ -2,12 +2,15 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { focusSearchRequest } from '../ui'
 import { nextHit as nextHitIndex, searchCommits } from '../search'
+import { ask } from '../prompt'
 import { useRepo, WIP } from '../stores/repo'
+import { useTabs } from '../stores/tabs'
 import GraphCell from './GraphCell.vue'
 
 const ROW = 28
 const OVERSCAN = 10
 const repo = useRepo()
+const tabs = useTabs()
 const scroller = ref<HTMLElement>()
 const scrollTop = ref(0)
 const height = ref(800)
@@ -42,6 +45,7 @@ async function menu(sha: string) {
         ]
       : []),
     ...(head && !onHead && !repo.info?.operation ? [{ id: 'interactive', label: 'Interaktiver Rebase ab hier…' }] : []),
+    { id: 'worktree', label: 'Worktree mit neuem Branch hier anlegen…', enabled: !repo.busy },
     { separator: true },
     { id: 'copy', label: 'SHA kopieren' }
   ])
@@ -50,6 +54,11 @@ async function menu(sha: string) {
   else if (id === 'merge') repo.mergeInto(sha)
   else if (id === 'rebase') repo.rebaseOnto(sha)
   else if (id === 'interactive') repo.openRebasePlan(sha)
+  else if (id === 'worktree') {
+    const branch = await ask('Name des neuen Branches für den Worktree', '', 'Weiter')
+    const path = branch && (await repo.addWorktree(branch, sha))
+    if (path) await tabs.openPath(path)
+  }
   else if (id === 'copy') navigator.clipboard.writeText(sha)
 }
 

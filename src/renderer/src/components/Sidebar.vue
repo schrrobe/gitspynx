@@ -1,9 +1,13 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { Ref } from '../../../shared/types'
+import type { Worktree } from '../../../shared/types'
 import { useRepo } from '../stores/repo'
+import { useTabs } from '../stores/tabs'
 
 const repo = useRepo()
+const tabs = useTabs()
+const checkedOutElsewhere = (r: Ref) => repo.info?.worktrees.some((t) => !t.main && t.branch === r.name) ?? false
 const isHead = (r: Ref) => r.kind === 'local' && r.name === repo.info?.head.branch
 
 async function menu(r: Ref) {
@@ -19,6 +23,7 @@ async function menu(r: Ref) {
           { id: 'rebase', label: `„${head}“ auf „${r.name}“ rebasen…` }
         ]
       : []),
+    ...(r.kind === 'local' && !isHead(r) && !checkedOutElsewhere(r) ? [{ id: 'worktree', label: 'Worktree für diesen Branch anlegen…' }] : []),
     ...(r.kind === 'local'
       ? [{ id: 'rename', label: 'Umbenennen…' }, { separator: true as const }, { id: 'delete', label: 'Löschen…', enabled: !isHead(r) }]
       : []),
@@ -38,6 +43,7 @@ async function menu(r: Ref) {
   else if (id === 'delete-remote') repo.deleteRemoteBranch(r.name)
   else if (id === 'merge') repo.mergeInto(r.name)
   else if (id === 'rebase') repo.rebaseOnto(r.name)
+  else if (id === 'worktree') openNewWorktree(r.name, null)
   else if (id === 'hide') repo.toggleHidden(r.fullName)
   else if (id === 'solo') repo.toggleSolo(r.fullName)
 }
@@ -55,6 +61,29 @@ const sections = computed(() => {
     { title: 'Tags', refs: of('tag') }
   ].filter((s) => s.refs.length)
 })
+
+async function openNewWorktree(branch: string, fromSha: string | null) {
+  const path = await repo.addWorktree(branch, fromSha)
+  if (path) await tabs.openPath(path)
+}
+
+const name = (path: string) => path.split(/[\\/]/).pop()
+
+async function worktreeMenu(t: Worktree) {
+  const current = t.path === repo.info?.path
+  const id = await window.gitspynx.showContextMenu([
+    { id: 'open', label: 'Als Tab öffnen', enabled: !current && !t.prunable },
+    { separator: true },
+    ...(t.prunable ? [{ id: 'prune', label: 'Verwaiste Worktrees aufräumen' }] : []),
+    { id: 'remove', label: 'Entfernen…', enabled: !t.main && !current }
+  ])
+  if (id === 'open') tabs.openPath(t.path)
+  else if (id === 'prune') repo.pruneWorktrees()
+  else if (id === 'remove' && (await repo.removeWorktree(t.path))) {
+    const i = tabs.tabs.indexOf(t.path)
+    if (i !== -1) tabs.closeTab(i)
+  }
+}
 
 async function stashMenu(sha: string) {
   repo.select(sha)
@@ -90,6 +119,21 @@ async function stashMenu(sha: string) {
       >
         <span class="name">{{ r.name }}</span>
         <span v-if="r.ahead || r.behind" class="dim mono">↑{{ r.ahead }} ↓{{ r.behind }}</span>
+      </button>
+    </section>
+    <section v-if="(repo.info?.worktrees.length ?? 0) > 1">
+      <h3>Worktrees <span class="dim">{{ repo.info!.worktrees.length }}</span></h3>
+      <button
+        v-for="t in repo.info!.worktrees"
+        :key="t.path"
+        class="item"
+        :class="{ head: t.path === repo.info?.path, hidden: t.prunable }"
+        :title="`${t.path}${t.prunable ? ' (Ordner fehlt)' : ''} – Doppelklick öffnet als Tab`"
+        @dblclick="!t.prunable && t.path !== repo.info?.path && tabs.openPath(t.path)"
+        @contextmenu.prevent="worktreeMenu(t)"
+      >
+        <span class="name">{{ t.branch ?? 'detached' }}</span>
+        <span class="dim">{{ t.main ? 'Haupt' : name(t.path) }}</span>
       </button>
     </section>
     <section v-if="repo.info?.stashes.length">

@@ -1,9 +1,10 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme } from 'electron'
 import { readFile, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { type DiffTarget, type GitspynxApi, type HunkSelection, type RebaseStep, type UndoStep, MAX_LOG_PAGE, type MenuItem, type RepoChange, type Resolution, type Session } from '../shared/types'
 import {
   abortOperation,
+  addWorktree,
   applyUndo,
   checkout,
   cherryPick,
@@ -19,6 +20,7 @@ import {
   isRejectedPush,
   merge,
   openRepo,
+  pruneWorktrees,
   pull,
   push,
   readCommit,
@@ -29,6 +31,7 @@ import {
   readLog,
   readStatus,
   rebase,
+  removeWorktree,
   renameBranch,
   resolveConflict,
   skipOperation,
@@ -245,6 +248,7 @@ const handlers: Handlers = {
     const request = opens.next()
     const info = await openRepo(await allowedPath(path))
     opened.set(info.path, info.tips)
+    for (const t of info.worktrees) picked.add(t.path) // reported by git: may be opened as tabs
     await remember(info.path)
     if (opens.isLatest(request)) await watchOpenRepo(info.path, sender)
     return info
@@ -267,6 +271,23 @@ const handlers: Handlers = {
   interactiveRebase: (_s, repo, base, steps) => interactiveRebase(knownRepo(repo), str(base), rebaseSteps(steps)),
   applyUndo: (_s, repo, steps) => applyUndo(knownRepo(repo), undoSteps(steps)),
   readHead: (_s, repo) => readHead(knownRepo(repo)),
+  async addWorktree(sender, repo, branch, fromSha) {
+    const path = knownRepo(repo)
+    const name = str(branch)
+    const window = BrowserWindow.fromWebContents(sender) ?? undefined
+    const res = await dialog.showSaveDialog(window!, {
+      title: `Worktree für „${name}“ anlegen`,
+      defaultPath: join(dirname(path), `${basename(path)}-${name.replace(/[\\/]/g, '-')}`),
+      buttonLabel: 'Worktree anlegen',
+      properties: ['createDirectory']
+    })
+    if (res.canceled || !res.filePath) return null
+    await addWorktree(path, res.filePath, name, fromSha === null ? null : str(fromSha))
+    picked.add(res.filePath) // the renderer may open it as a tab
+    return res.filePath
+  },
+  removeWorktree: (_s, repo, path, force) => removeWorktree(knownRepo(repo), str(path), force === true),
+  pruneWorktrees: (_s, repo) => pruneWorktrees(knownRepo(repo)),
   commit: (_s, repo, message, amend) => commit(knownRepo(repo), str(message), amend === true),
   createBranch: (_s, repo, name, start, switchTo) => createBranch(knownRepo(repo), str(name), str(start), switchTo === true),
   checkout: (_s, repo, branch) => checkout(knownRepo(repo), str(branch)),

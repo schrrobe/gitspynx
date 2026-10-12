@@ -1,11 +1,11 @@
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { lstat, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
-import { basename, dirname, join, resolve, sep } from 'node:path'
-import type { Commit, CommitDetail, ConflictVersions, DiffTarget, FileDiff, FileStatus, HunkSelection, Operation, RebaseCommit, RebaseStep, RepoInfo, Resolution, UndoStep } from '../shared/types'
+import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path'
+import type { Commit, CommitDetail, ConflictVersions, DiffTarget, FileDiff, FileStatus, HunkSelection, Operation, RebaseCommit, RebaseStep, RepoInfo, Resolution, UndoStep, Worktree } from '../shared/types'
 import { hunkKey } from '../shared/hunk'
 import { buildPatch } from './patch'
-import { LOG_FORMAT, parseDiff, parseLog, parseNameStatus, parseRefs, parseStatus, REF_FORMAT } from './parse'
+import { LOG_FORMAT, parseDiff, parseLog, parseNameStatus, parseRefs, parseStatus, parseWorktrees, REF_FORMAT } from './parse'
 
 export class GitError extends Error {
   constructor(message: string, readonly code: number | null = null, readonly stderr = '') {
@@ -95,8 +95,8 @@ export async function openRepo(dir: string): Promise<RepoInfo> {
   const head = { branch: branch.stdout.trim() || null, sha: sha.stdout.trim() || null }
   // Stashes are listed separately; their internal index/untracked commits are not history.
   const tips = [...new Set([...(head.sha ? [head.sha] : []), ...refs.filter((r) => r.kind !== 'stash').map((r) => r.target)])]
-  const [operation, stashes] = await Promise.all([currentOperation(path), listStashes(path)])
-  return { path, head, refs, tips, operation, stashes }
+  const [operation, stashes, worktrees] = await Promise.all([currentOperation(path), listStashes(path), listWorktrees(path)])
+  return { path, head, refs, tips, operation, stashes, worktrees }
 }
 
 // Pages over a fixed set of tips so commits made between pages cannot shift the order.
@@ -560,4 +560,29 @@ export async function applyUndo(repo: string, steps: UndoStep[]): Promise<void> 
         break
     }
   }
+}
+
+// ---- worktrees ----
+
+export async function listWorktrees(repo: string): Promise<Worktree[]> {
+  return parseWorktrees((await run(['worktree', 'list', '--porcelain', '-z'], repo)).stdout)
+}
+
+// fromSha given: create the branch there; otherwise check out the existing branch.
+export async function addWorktree(repo: string, path: string, branch: string, fromSha: string | null): Promise<void> {
+  if (!isAbsolute(path)) throw new GitError('work tree path must be absolute')
+  await assertBranchName(repo, branch)
+  if (fromSha) assertRevision(fromSha)
+  await run(fromSha ? ['worktree', 'add', '-b', branch, path, fromSha] : ['worktree', 'add', path, branch], repo)
+}
+
+export async function removeWorktree(repo: string, path: string, force: boolean): Promise<void> {
+  const tree = (await listWorktrees(repo)).find((t) => t.path === path)
+  if (!tree) throw new GitError(`not a work tree of this repository: ${path}`)
+  if (tree.main) throw new GitError('the main work tree cannot be removed')
+  await run(['worktree', 'remove', ...(force ? ['--force'] : []), path], repo)
+}
+
+export async function pruneWorktrees(repo: string): Promise<void> {
+  await run(['worktree', 'prune'], repo)
 }

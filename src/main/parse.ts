@@ -1,4 +1,4 @@
-import type { Commit, FileChange, FileDiff, FileStatus, Ref } from '../shared/types'
+import type { Commit, FileChange, FileDiff, FileStatus, Ref, Worktree } from '../shared/types'
 
 export const US = '\x1f' // field separator for for-each-ref (refnames cannot contain control characters)
 
@@ -125,4 +125,24 @@ export function parseDiff(out: string): FileDiff {
     else if (type === '+') current.lines.push({ type, text: line.slice(1), oldNo: null, newNo: newNo++ })
   }
   return diff
+}
+
+// git worktree list --porcelain -z: NUL-terminated attribute lines, an empty one ends a record.
+export function parseWorktrees(out: string): Worktree[] {
+  return out
+    .split('\0\0')
+    .filter(Boolean)
+    .map((record, i) => {
+      const t: Worktree = { path: '', head: '', branch: null, main: i === 0, locked: false, prunable: false }
+      for (const line of record.split('\0')) {
+        const [key, ...rest] = line.split(' ')
+        const value = rest.join(' ')
+        if (key === 'worktree') t.path = value
+        else if (key === 'HEAD') t.head = value
+        else if (key === 'branch') t.branch = value.replace(/^refs\/heads\//, '')
+        else if (key === 'locked') t.locked = true
+        else if (key === 'prunable') t.prunable = true
+      }
+      return t
+    })
 }

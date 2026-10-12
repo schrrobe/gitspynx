@@ -4,7 +4,7 @@ import type { Commit, RepoInfo } from '../../../shared/types'
 import { MAX_LOG_PAGE } from '../../../shared/types'
 import { useRepo, WIP } from './repo'
 
-const info: RepoInfo = { path: '/r', head: { branch: 'main', sha: 'a0' }, refs: [], tips: ['a0'], operation: null, stashes: [] }
+const info: RepoInfo = { path: '/r', head: { branch: 'main', sha: 'a0' }, refs: [], tips: ['a0'], operation: null, stashes: [], worktrees: [] }
 const page = (prefix: string, n = 2000): Commit[] =>
   Array.from({ length: n }, (_, i) => ({
     sha: `${prefix}${i}`,
@@ -582,5 +582,35 @@ describe('repo store', () => {
     await repo.open('/r')
     await repo.checkoutBranch('other')
     expect(repo.error).toMatch(/would be overwritten/)
+  })
+
+  describe('worktrees', () => {
+    const w = () => (globalThis as unknown as { window: { gitspynx: Record<string, unknown> } }).window
+    async function opened(confirms: boolean[], dirty: boolean) {
+      w().gitspynx.openRepo = async () => info
+      w().gitspynx.readLog = async () => page('c', 3)
+      w().gitspynx.confirm = async () => confirms.shift() ?? false
+      const calls: [string, boolean][] = []
+      w().gitspynx.removeWorktree = async (_r: string, path: string, force: boolean) => {
+        calls.push([path, force])
+        if (dirty && !force) throw new Error("fatal: '/wt' contains modified or untracked files, use --force to delete it")
+      }
+      const repo = useRepo()
+      await repo.open('/r')
+      return { repo, calls }
+    }
+
+    it('asks before removing a work tree', async () => {
+      const { repo, calls } = await opened([false], false)
+      expect(await repo.removeWorktree('/wt')).toBe(false)
+      expect(calls).toEqual([])
+    })
+
+    it('asks again and forces when the work tree has local changes', async () => {
+      const { repo, calls } = await opened([true, true], true)
+      expect(await repo.removeWorktree('/wt')).toBe(true)
+      expect(calls).toEqual([['/wt', false], ['/wt', true]])
+      expect(repo.error).toBeNull()
+    })
   })
 })

@@ -1,10 +1,14 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import {
   abortOperation,
+  addWorktree,
+  listWorktrees,
+  pruneWorktrees,
+  removeWorktree,
   applyUndo,
   readHead,
   assertRevision,
@@ -1027,5 +1031,59 @@ describe('undo actions', () => {
     await applyUndo(ud, [{ type: 'renameBranch', from: 'old-name', to: 'new-name' }])
     expect(u('branch', '--list', 'new-name')).toBe('new-name')
     u('branch', '-D', 'new-name')
+  })
+})
+
+describe('worktrees', () => {
+  let root: string
+  let main: string
+  const w = (...args: string[]) => execFileSync('git', args, { cwd: main, env }).toString().trim()
+
+  beforeAll(() => {
+    root = realpathSync(mkdtempSync(join(tmpdir(), 'gitspynx-wt-')))
+    main = join(root, 'main')
+    mkdirSync(main)
+    w('init', '-q', '-b', 'main')
+    w('commit', '-q', '--allow-empty', '-m', 'one')
+    w('branch', 'feature')
+  })
+  afterAll(() => rmSync(root, { recursive: true, force: true }))
+
+  it('lists the main work tree', async () => {
+    expect(await listWorktrees(main)).toEqual([{ path: main, head: w('rev-parse', 'HEAD'), branch: 'main', main: true, locked: false, prunable: false }])
+  })
+
+  it('adds work trees for an existing and for a new branch', async () => {
+    await addWorktree(main, join(root, 'wt-feature'), 'feature', null)
+    await addWorktree(main, join(root, 'wt-new'), 'new-branch', w('rev-parse', 'HEAD'))
+    const list = await listWorktrees(main)
+    expect(list.map((t) => [t.path, t.branch, t.main])).toEqual([
+      [main, 'main', true],
+      [join(root, 'wt-feature'), 'feature', false],
+      [join(root, 'wt-new'), 'new-branch', false]
+    ])
+  })
+
+  it('refuses to remove a work tree with local changes unless forced', async () => {
+    writeFileSync(join(root, 'wt-feature', 'dirty.txt'), 'x')
+    await expect(removeWorktree(main, join(root, 'wt-feature'), false)).rejects.toThrow(/untracked|modified/)
+    await removeWorktree(main, join(root, 'wt-feature'), true)
+    expect((await listWorktrees(main)).map((t) => t.path)).not.toContain(join(root, 'wt-feature'))
+  })
+
+  it('refuses to remove the main work tree or an unknown path', async () => {
+    await expect(removeWorktree(main, main, true)).rejects.toThrow(/main work tree/)
+    await expect(removeWorktree(main, join(root, 'nope'), true)).rejects.toThrow(/not a work tree/)
+  })
+
+  it('marks a work tree whose folder is gone as prunable, and prunes it', async () => {
+    rmSync(join(root, 'wt-new'), { recursive: true })
+    expect((await listWorktrees(main)).find((t) => t.branch === 'new-branch')?.prunable).toBe(true)
+    await pruneWorktrees(main)
+    expect((await listWorktrees(main)).map((t) => t.branch)).toEqual(['main'])
+  })
+
+  it('reports work trees in the repository info', async () => {
+    expect((await openRepo(main)).worktrees.map((t) => t.branch)).toEqual(['main'])
   })
 })

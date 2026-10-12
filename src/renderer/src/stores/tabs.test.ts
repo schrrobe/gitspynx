@@ -15,7 +15,8 @@ const infoFor = (path: string): RepoInfo => ({
   refs: [{ name: 'topic', fullName: 'refs/heads/topic', kind: 'local', target: `${path}-topic` }],
   tips: [`${path}-head`, `${path}-topic`],
   operation: null,
-  stashes: []
+  stashes: [],
+  worktrees: []
 })
 
 beforeEach(() => {

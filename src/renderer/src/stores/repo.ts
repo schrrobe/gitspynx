@@ -532,6 +532,36 @@ export const useRepo = defineStore('repo', () => {
     }
   }
 
+  // Resolves to the new work tree's path (to open as a tab), or null.
+  async function addWorktree(branch: string, fromSha: string | null): Promise<string | null> {
+    let path: string | null = null
+    await mutate(async (r) => void (path = await window.gitspynx.addWorktree(r, branch, fromSha)))
+    return path
+  }
+
+  async function removeWorktree(path: string): Promise<boolean> {
+    if (!(await window.gitspynx.confirm(`Worktree „${path}“ entfernen?`, 'Der Ordner wird gelöscht; der Branch bleibt erhalten.', 'Entfernen'))) return false
+    let removed = false
+    await mutate(async (r) => {
+      try {
+        await window.gitspynx.removeWorktree(r, path, false)
+      } catch (e) {
+        if (!/modified or untracked|use --force/.test(String(e))) throw e
+        const force = await window.gitspynx.confirm(
+          'Der Worktree enthält nicht committete Änderungen.',
+          'Beim Entfernen gehen diese Änderungen verloren.',
+          'Trotzdem entfernen'
+        )
+        if (!force) return
+        await window.gitspynx.removeWorktree(r, path, true)
+      }
+      removed = true
+    })
+    return removed
+  }
+
+  const pruneWorktrees = () => mutate((r) => window.gitspynx.pruneWorktrees(r))
+
   const close = () => {
     void window.gitspynx.closeRepo()
     rebasePlan.value = null
@@ -553,6 +583,6 @@ export const useRepo = defineStore('repo', () => {
     graph, refsBySha, open, refresh, loadMore, select, refreshStatus, openDiff, closeDiff, stage, unstage, commit, close,
     checkoutBranch, createBranch, renameBranch, deleteBranch, busy, fetchAll, pullBranch, pushBranch, deleteRemoteBranch,
     conflict, mergeInto, rebaseOnto, cherryPick, continueOp, skipOp, abortOp, openConflict, resolve,
-    stash, applyStash, popLatestStash, dropStash, stageHunk, undo, redo, undoLabel, redoLabel, rebasePlan, openRebasePlan, startRebase, hidden, solo, toggleHidden, toggleSolo, resetFilters, loadAll
+    stash, applyStash, popLatestStash, dropStash, stageHunk, addWorktree, removeWorktree, pruneWorktrees, undo, redo, undoLabel, redoLabel, rebasePlan, openRebasePlan, startRebase, hidden, solo, toggleHidden, toggleSolo, resetFilters, loadAll
   }
 })

@@ -42,6 +42,16 @@ export interface RepoInfo {
   tips: string[] // commits the log pages over; fixed until the repo is reopened
   operation: Operation | null // multi-step operation waiting for conflicts to be resolved
   stashes: Commit[] // newest first; subject like "On main: message"
+  worktrees: Worktree[] // first = main work tree
+}
+
+export interface Worktree {
+  path: string
+  head: string
+  branch: string | null // null = detached
+  main: boolean
+  locked: boolean
+  prunable: boolean // its folder is gone
 }
 
 export type Operation = 'merge' | 'rebase' | 'cherry-pick' | 'revert'
@@ -80,6 +90,10 @@ export interface GitspynxApi {
   interactiveRebase(repo: string, base: string, steps: RebaseStep[]): Promise<'ok' | 'conflicts'>
   applyUndo(repo: string, steps: UndoStep[]): Promise<void>
   readHead(repo: string): Promise<{ sha: string | null; branch: string | null }>
+  // Asks for the folder in a dialog; resolves to the new work tree's path, or null if cancelled.
+  addWorktree(repo: string, branch: string, fromSha: string | null): Promise<string | null>
+  removeWorktree(repo: string, path: string, force: boolean): Promise<void>
+  pruneWorktrees(repo: string): Promise<void>
   commit(repo: string, message: string, amend: boolean): Promise<void>
   createBranch(repo: string, name: string, start: string, switchTo: boolean): Promise<void>
   checkout(repo: string, branch: string): Promise<void>
