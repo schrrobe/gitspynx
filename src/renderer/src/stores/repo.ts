@@ -540,7 +540,8 @@ export const useRepo = defineStore('repo', () => {
   }
 
   async function removeWorktree(path: string): Promise<boolean> {
-    if (!(await window.gitspynx.confirm(`Worktree „${path}“ entfernen?`, 'Der Ordner wird gelöscht; der Branch bleibt erhalten.', 'Entfernen'))) return false
+    const detail = 'Der Ordner wird samt allen Dateien gelöscht – auch von git ignorierte wie .env oder lokale Datenbanken. Der Branch bleibt erhalten.'
+    if (!(await window.gitspynx.confirm(`Worktree „${path}“ entfernen?`, detail, 'Entfernen'))) return false
     let removed = false
     await mutate(async (r) => {
       try {

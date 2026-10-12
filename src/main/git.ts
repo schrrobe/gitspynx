@@ -95,7 +95,8 @@ export async function openRepo(dir: string): Promise<RepoInfo> {
   const head = { branch: branch.stdout.trim() || null, sha: sha.stdout.trim() || null }
   // Stashes are listed separately; their internal index/untracked commits are not history.
   const tips = [...new Set([...(head.sha ? [head.sha] : []), ...refs.filter((r) => r.kind !== 'stash').map((r) => r.target)])]
-  const [operation, stashes, worktrees] = await Promise.all([currentOperation(path), listStashes(path), listWorktrees(path)])
+  // A broken work tree entry must not keep the repository from opening.
+  const [operation, stashes, worktrees] = await Promise.all([currentOperation(path), listStashes(path), listWorktrees(path).catch(() => [])])
   return { path, head, refs, tips, operation, stashes, worktrees }
 }
 
@@ -564,8 +565,14 @@ export async function applyUndo(repo: string, steps: UndoStep[]): Promise<void> 
 
 // ---- worktrees ----
 
+// -z needs git 2.36; older versions get the newline format (paths with newlines are then ambiguous).
 export async function listWorktrees(repo: string): Promise<Worktree[]> {
-  return parseWorktrees((await run(['worktree', 'list', '--porcelain', '-z'], repo)).stdout)
+  try {
+    return parseWorktrees((await run(['worktree', 'list', '--porcelain', '-z'], repo)).stdout)
+  } catch (e) {
+    if ((e as GitError).code !== 129) throw e // 129: unknown option
+    return parseWorktrees((await run(['worktree', 'list', '--porcelain'], repo)).stdout, '\n')
+  }
 }
 
 // fromSha given: create the branch there; otherwise check out the existing branch.

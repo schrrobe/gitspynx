@@ -127,14 +127,15 @@ export function parseDiff(out: string): FileDiff {
   return diff
 }
 
-// git worktree list --porcelain -z: NUL-terminated attribute lines, an empty one ends a record.
-export function parseWorktrees(out: string): Worktree[] {
+// git worktree list --porcelain [-z]: attribute lines terminated by sep (NUL with -z, newline
+// on git < 2.36), an empty line ends a record.
+export function parseWorktrees(out: string, sep: '\0' | '\n' = '\0'): Worktree[] {
   return out
-    .split('\0\0')
-    .filter(Boolean)
+    .split(sep + sep)
+    .filter((r) => r.trim())
     .map((record, i) => {
       const t: Worktree = { path: '', head: '', branch: null, main: i === 0, locked: false, prunable: false }
-      for (const line of record.split('\0')) {
+      for (const line of record.split(sep)) {
         const [key, ...rest] = line.split(' ')
         const value = rest.join(' ')
         if (key === 'worktree') t.path = value

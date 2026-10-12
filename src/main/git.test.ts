@@ -47,6 +47,7 @@ import {
   listStashes,
   unstage
 } from './git'
+import { parseWorktrees } from './parse'
 import { hunkKey } from '../shared/hunk'
 
 const env = {
@@ -1081,6 +1082,28 @@ describe('worktrees', () => {
     expect((await listWorktrees(main)).find((t) => t.branch === 'new-branch')?.prunable).toBe(true)
     await pruneWorktrees(main)
     expect((await listWorktrees(main)).map((t) => t.branch)).toEqual(['main'])
+  })
+
+  it('still opens the repository when the work tree list cannot be read', async () => {
+    const broken = join(main, '.git', 'worktrees', 'broken')
+    mkdirSync(broken, { recursive: true })
+    writeFileSync(join(broken, 'commondir'), '')
+    writeFileSync(join(broken, 'gitdir'), join(root, 'gone', '.git') + '\n')
+    writeFileSync(join(broken, 'HEAD'), 'ref: refs/heads/main\n')
+    try {
+      const info = await openRepo(main)
+      expect(info.path).toBe(main)
+    } finally {
+      rmSync(broken, { recursive: true, force: true })
+    }
+  })
+
+  it('parses the newline-separated porcelain format of older git versions', () => {
+    const out = ['worktree /a', 'HEAD abc', 'branch refs/heads/main', '', 'worktree /b c', 'HEAD def', 'detached', 'locked', ''].join('\n')
+    expect(parseWorktrees(out, '\n')).toEqual([
+      { path: '/a', head: 'abc', branch: 'main', main: true, locked: false, prunable: false },
+      { path: '/b c', head: 'def', branch: null, main: false, locked: true, prunable: false }
+    ])
   })
 
   it('reports work trees in the repository info', async () => {
