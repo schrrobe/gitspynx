@@ -62,3 +62,29 @@ describe('resolveKeymap', () => {
     expect(invalid).toEqual(['b'])
   })
 })
+
+describe('layouts', () => {
+  it('names the plus key and ignores Shift for symbol keys', () => {
+    expect(comboFromEvent(ev('+', { metaKey: true }), true)).toBe('Mod+Plus') // German "+" key
+    expect(comboFromEvent(ev('+', { metaKey: true, shiftKey: true }), true)).toBe('Mod+Plus') // US Shift+=
+    expect(comboFromEvent(ev('=', { metaKey: true, shiftKey: true }), true)).toBe('Mod+=') // German Shift+0
+    expect(comboFromEvent(ev('P', { metaKey: true, shiftKey: true }), true)).toBe('Mod+Shift+P') // letters keep Shift
+  })
+
+  it('falls back to the physical key on non-Latin layouts', () => {
+    expect(comboFromEvent({ ...ev('а', { ctrlKey: true }), code: 'KeyF' }, false)).toBe('Mod+F')
+  })
+
+  it('parses plus in written combos', () => {
+    expect(normalizeCombo('Cmd++', true)).toBe('Mod+Plus')
+    expect(normalizeCombo('cmd+plus', true)).toBe('Mod+Plus')
+    expect(normalizeCombo('Cmd+Shift+=', true)).toBe('Mod+=')
+  })
+
+  it('accepts several default combos for one command', () => {
+    const { byCombo, byCommand } = resolveKeymap([{ id: 'zoom', keys: ['Mod+=', 'Mod+Plus'] }], {}, true)
+    expect(byCombo.get('Mod+=')).toBe('zoom')
+    expect(byCombo.get('Mod+Plus')).toBe('zoom')
+    expect(byCommand.get('zoom')).toBe('Mod+=')
+  })
+})

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { buildCommands } from './commands'
+import { buildCommands, commandForKey } from './commands'
 import CommandPalette from './components/CommandPalette.vue'
 import CommitDetail from './components/CommitDetail.vue'
 import SettingsDialog from './components/SettingsDialog.vue'
@@ -37,11 +37,10 @@ const keymap = computed(() => resolveKeymap(commands, settings.settings.keymap))
 function onKey(e: KeyboardEvent) {
   if (e.defaultPrevented || document.querySelector('dialog[open]')) return // dialogs handle their own keys
   const combo = comboFromEvent(e)
-  if (!combo) return
-  const typing = (e.target as HTMLElement | null)?.closest?.('input, textarea, select')
-  if (typing && !/^(Mod|Ctrl)\+/.test(combo)) return // plain keys belong to the text field
-  const command = commands.find((c) => c.id === keymap.value.byCombo.get(combo))
-  if (!command || command.enabled?.() === false) return
+  if (!combo || e.isComposing) return
+  const inTextField = !!(e.target as HTMLElement | null)?.closest?.('input, textarea, select')
+  const command = commandForKey(combo, { repeat: e.repeat, inTextField }, commands, keymap.value.byCombo)
+  if (!command) return
   e.preventDefault()
   command.run()
 }

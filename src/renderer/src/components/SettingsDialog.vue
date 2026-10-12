@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import type { Command } from '../commands'
-import { displayCombo, normalizeCombo, resolveKeymap } from '../keymap'
+import { comboFromEvent, displayCombo, normalizeCombo, resolveKeymap } from '../keymap'
 import { useSettings } from '../stores/settings'
 import { settingsOpen } from '../ui'
 
@@ -21,14 +21,14 @@ function record(e: KeyboardEvent, c: Command) {
   e.stopPropagation()
   if (e.key === 'Escape') return (e.target as HTMLElement).blur()
   if (e.key === 'Backspace' && !e.metaKey && !e.ctrlKey) return setKey(c, '')
-  const parts = [e.metaKey && 'Cmd', e.ctrlKey && 'Ctrl', e.altKey && 'Alt', e.shiftKey && 'Shift', e.key].filter(Boolean)
-  const combo = normalizeCombo(parts.join('+'))
+  const combo = comboFromEvent(e)
   if (combo) setKey(c, combo)
 }
 
 function setKey(c: Command, combo: string) {
   const next = { ...store.settings.keymap }
-  if (combo === (c.keys ? normalizeCombo(c.keys) : '')) delete next[c.id]
+  const defaults = [c.keys ?? []].flat()
+  if (defaults.length === 1 && combo === normalizeCombo(defaults[0])) delete next[c.id]
   else next[c.id] = combo
   store.save({ keymap: next })
 }

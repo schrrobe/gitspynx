@@ -7,9 +7,24 @@ import { focusSearchRequest, paletteOpen, settingsOpen } from './ui'
 export interface Command {
   id: string
   title: string
-  keys?: string // default combo, see keymap.ts
+  keys?: string | string[] // default combo(s), see keymap.ts
+  repeatable?: boolean // may fire on key repeat (zoom); others fire once per press
   enabled?: () => boolean
   run: () => unknown
+}
+
+// The command a key press triggers, if any: plain keys (no Mod/Ctrl) stay with text fields, key
+// repeat only drives repeatable commands (holding Mod+W must not close every tab).
+export function commandForKey(
+  combo: string,
+  e: { repeat: boolean; inTextField: boolean },
+  commands: Command[],
+  byCombo: Map<string, string>
+): Command | undefined {
+  if (e.inTextField && !/^(Mod|Ctrl)\+/.test(combo)) return undefined
+  const command = commands.find((c) => c.id === byCombo.get(combo))
+  if (!command || (e.repeat && !command.repeatable) || command.enabled?.() === false) return undefined
+  return command
 }
 
 interface Context {
@@ -68,15 +83,15 @@ export function buildCommands({ repo, tabs, settings, pickRepo }: Context): Comm
       id: 'search.focus',
       title: 'Commits suchen',
       keys: 'Mod+F',
-      enabled: open,
+      enabled: () => open() && !repo.conflict, // the conflict editor's unsaved result would be lost
       run: () => {
         repo.closeDiff()
         repo.conflict = null
         focusSearchRequest.value++
       }
     },
-    { id: 'view.zoomIn', title: 'Vergrößern', keys: 'Mod+=', run: () => zoom(1) },
-    { id: 'view.zoomOut', title: 'Verkleinern', keys: 'Mod+-', run: () => zoom(-1) },
+    { id: 'view.zoomIn', title: 'Vergrößern', keys: ['Mod+=', 'Mod+Plus'], repeatable: true, run: () => zoom(1) },
+    { id: 'view.zoomOut', title: 'Verkleinern', keys: 'Mod+-', repeatable: true, run: () => zoom(-1) },
     { id: 'view.zoomReset', title: 'Originalgröße', keys: 'Mod+0', run: () => settings.save({ zoom: 1 }) },
     {
       id: 'view.toggleTheme',
