@@ -25,8 +25,9 @@ Alle Meilensteine **M0–M10** der Roadmap sind umgesetzt (Branch `feat/m0-m1-sc
 
 - [x] **1. Installer und Packaging** – electron-builder (`npm run dist`): dmg/zip (macOS), NSIS (Windows), AppImage/deb (Linux). Der Workflow „Package" baut alle drei und startet die gepackte App mit einem Smoke-Test (`tools/smoke.cjs`: Repo öffnen, Graph, Terminal).
   - [ ] Signierung und Notarisierung – braucht ein Apple-Developer-ID-Zertifikat und ein Windows-Codesigning-Zertifikat (`CSC_LINK`, `APPLE_ID` …); bis dahin unsigniert (macOS: Rechtsklick → Öffnen)
-  - [ ] Eigenes App-Icon (derzeit das Electron-Icon)
-  - [ ] Veröffentlichung als GitHub-Release und Auto-Update (derzeit nur Workflow-Artefakte)
+  - [x] Eigenes App-Icon (`build/icon.svg`, als 1024-px-PNG gerendert; electron-builder erzeugt .icns/.ico)
+  - [x] Veröffentlichung: ein gepushter Tag `v*` lädt die Installer aller Systeme in einen GitHub-Release-**Entwurf**, der von Hand freigegeben wird
+  - [ ] Auto-Update – sinnvoll erst mit Signierung (macOS lässt unsignierte Updates nicht zu) und veröffentlichten Releases
 - [x] **2. Windows und Linux** – Unit- und Integrationstests laufen in der CI auf Linux, macOS und Windows; die gepackte App startet auf allen drei (Smoke-Test). Dabei gefunden und behoben: git meldet Windows-Pfade als `C:/…` mit Langnamen, Node als `C:\…` teils mit 8.3-Kurznamen (Worktrees); der macOS-`spawn-helper` von node-pty kommt ohne Ausführungsrecht (Terminal kaputt in sauberen Builds).
   - [ ] Die ausführlichen E2E-Treiber je Meilenstein liefen nur auf macOS
 - [x] **3. Echte Remotes** – gegen github.com über HTTPS aus der App geprüft: Push mit Upstream, Fetch mit ahead/behind, Pull eines fremden Commits, Remote-Branch löschen.
@@ -39,9 +40,9 @@ Alle Meilensteine **M0–M10** der Roadmap sind umgesetzt (Branch `feat/m0-m1-sc
 
 ### Abweichungen vom Plan
 
-- [ ] 6. Interaktiver Rebase: Umsortieren per ↑/↓ statt Drag & Drop, keine „edit"-Aktion
+- [x] 6. Interaktiver Rebase: Umsortieren per Drag & Drop (↑/↓ für die Tastatur bleiben), Aktion „Bearbeiten" hält nach dem Commit an (Amend, dann „Fortsetzen")
 - [x] 7. Großes echtes Repo gemessen: git/git mit 85.545 Commits (bis zu 317 Linien pro Zeile, Graph 158 Spuren breit). Erste Anzeige 1,4 s, „Alle laden" 2,8 s, Scrollen ohne lange Tasks (längster Frame 9,3 ms), Sprung an beliebige Stelle ≤ 20 ms, Suche über alles 26 ms, JS-Heap 99 MB. Dafür optimiert: gerade Spuren kompakt gespeichert und je Farbe als ein Pfad gezeichnet, Layout nur für neu geladene Seiten (vorher 1071 MB Renderer-Speicher, „Alle laden" 6–7 s, Sprünge bis 91 ms).
-  - [ ] Bei sehr breiten Graphen (git/git: ~2200 px) verschwinden Betreff, Autor und Datum aus dem Bild – Graph-Spalte begrenzen oder in der Breite verstellbar machen
+  - [x] Sehr breite Graphen (git/git: ~2200 px) verdrängten Betreff, Autor und Datum: die Graph-Spalte ist automatisch auf 240 px begrenzt und mit einem Griff verstellbar (Ziehen, ←/→, Doppelklick = automatisch; gespeichert). Ein Knoten in einer abgeschnittenen Spur erscheint als Ring am Rand
 
 ### Kleinere Punkte
 
@@ -51,17 +52,17 @@ Alle Meilensteine **M0–M10** der Roadmap sind umgesetzt (Branch `feat/m0-m1-sc
 - [x] 11. Merge rückgängig stellt unbeteiligte gestagte Änderungen nach `reset --keep` wieder her
 - [x] 12. Von git übersprungene Submodule (`update = none`) werden in einem Hinweis genannt
 - [x] 13. Terminal-Ausgabe wird gebündelt (wenige ms, höchstens 64K Zeichen je Nachricht); kommt das Fenster nicht hinterher (> 512K unbestätigte Zeichen), wird die Shell pausiert, bis es aufgeholt hat. Gemessen: 2 Mio. Zeilen in 1,3 s ohne Ruckler
-- [ ] 14. Später hinzugekommene verschachtelte Submodule lassen sich nicht aus der Oberfläche initialisieren
-- [ ] 15. „Git LFS: Muster tracken…" ist auch ohne git-lfs klickbar (klare Fehlermeldung)
+- [x] 14. Submodule in initialisierten Submodulen werden (eingerückt) gelistet und lassen sich gezielt initialisieren; git läuft dafür im übergeordneten Submodul
+- [x] 15. „Git LFS: Muster tracken…" ist nur aktiv, wenn git-lfs installiert ist
+- [x] 16. Eingebettete Repos ohne `.gitmodules`-Eintrag erscheinen als „nicht in .gitmodules" (öffnen ja, aktualisieren nein); der Index wird dafür nur nach einer Änderung neu gelesen
+- [x] 17. Ein nach Konflikten mit „Fortsetzen" beendeter Rebase ist per Klick rückgängig zu machen (zurück auf den Stand vor dem Rebase)
+- [x] 18. Fehler einer Hintergrund-Operation gehen nicht mehr verloren: roter Punkt am Tab (Meldung im Tooltip), die Meldung erscheint beim Zurückwechseln
+- [x] 19. Der Watcher startet nach einem Dateisystem-Fehler selbst neu (bis zu fünfmal)
+- [x] 20. Fetch, Pull, Push und Submodul-Updates laufen mit `--progress`; zwei Minuten ohne Ausgabe gelten als hängende Verbindung (auch bei SSH), Zeit in einem Passwort-Dialog zählt nicht. Große Übertragungen werden nicht mehr nach 2 bzw. 10 Minuten abgebrochen
+- [x] 21. Große Historien (git/git, 85.545 Commits): Neuladen behält alles Geladene (vorher auf 50.000 gekürzt) und baut eine unveränderte Historie nicht neu auf (längstes Frame 250 → 42 ms); die letzten drei Repos bleiben im Speicher, der Tabwechsel zurück zeigt sie in 57 ms mit Scrollposition (vorher ~450 ms und nur die ersten 2.000 Commits); der Diff ist virtualisiert (100.000 Zeilen in 0,5 s, vorher Abbruch nach 5.000). Layout und Suche bleiben im UI-Thread, gemessen unkritisch
 
 ### Bewusst in Kauf genommen
 
-- Eingebettete Repos ohne `.gitmodules`-Eintrag erscheinen nicht als Submodule
-- Ein nach Konflikten mit „Fortsetzen" beendeter Rebase ist nicht per Klick rückgängig zu machen (Reflog hat ihn)
-- Fehler in einem Hintergrund-Tab erscheinen erst beim Wechsel dorthin
-- Nach einem Dateisystem-Fehler startet der Watcher erst beim nächsten Neuladen/Tabwechsel neu
-- Eine hängende SSH-Übertragung wird erst nach 30 Minuten abgebrochen
-- Große Historien: inaktive Tabs laden beim Wechsel neu, Diffs zeigen höchstens 5000 Zeilen, Graph-Layout und Suche laufen im UI-Thread (bei 85k Commits unkritisch, siehe 7)
 - AltGr: falls Chromium auf AltGr-Layouts auch echtes Ctrl+Alt als AltGr meldet, würden Kürzel wie Ctrl+Alt+X dort als X gelesen (nicht geprüft)
 - Kein `git revert` aus der Oberfläche, keine Inhaltssuche (`git log -S/-G`), kein „Hunk verwerfen", keine Worktree-Sperre/-Verschiebung, Submodule ohne add/remove/sync, Terminal mit fester Höhe und einer Shell je Repo
 
