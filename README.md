@@ -27,7 +27,7 @@ Die Analyse nutzt ausschließlich die lokal installierte Kopie, verändert die I
 ## Entwicklung
 
 ```sh
-npm install        # baut auch node-pty (Terminal) gegen Electron; braucht Xcode CLT / build-essential
+npm install        # node-pty (Terminal) bringt Binärdateien für macOS/Windows mit; Linux braucht build-essential
 npm run dev        # App mit Hot Reload
 npm test           # Vitest (Parser, Git-Backend gegen echte Temp-Repos, Graph-Layout)
 npm run typecheck

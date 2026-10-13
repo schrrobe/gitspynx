@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createTerminals, type PtyLike } from './terminal'
+import { createTerminals, type PtyLike, shellEnv } from './terminal'
 
 function fakePty() {
   const p = {
@@ -81,5 +81,36 @@ describe('terminals', () => {
     expect(ptys.map((p) => p.killed)).toEqual([true, true, false])
     ptys[2].exitCb({ exitCode: 1 })
     expect(() => t.write(2, other, 'x')).toThrow()
+  })
+})
+
+describe('shellEnv', () => {
+  const launcher = {
+    HOME: '/Users/a',
+    PATH: '/app/gitspynx/node_modules/.bin:/usr/local/bin:/usr/bin',
+    NODE_ENV: 'production',
+    NODE_ENV_ELECTRON_VITE: 'production',
+    ELECTRON_RENDERER_URL: 'http://localhost:5173',
+    ELECTRON_RUN_AS_NODE: '1',
+    npm_lifecycle_event: 'start',
+    INIT_CWD: '/app/gitspynx',
+    EDITOR: 'vim'
+  }
+
+  it('drops variables that belong to how gitspynx itself was started', () => {
+    const env = shellEnv(launcher, '/app/gitspynx', 'darwin')
+    for (const k of ['NODE_ENV', 'NODE_ENV_ELECTRON_VITE', 'ELECTRON_RENDERER_URL', 'ELECTRON_RUN_AS_NODE', 'npm_lifecycle_event', 'INIT_CWD'])
+      expect(env[k]).toBeUndefined()
+    expect(env.PATH).toBe('/usr/local/bin:/usr/bin')
+    expect(env.HOME).toBe('/Users/a')
+    expect(env.EDITOR).toBe('vim')
+  })
+
+  it('identifies the terminal and gives Dock-launched macOS shells a UTF-8 locale', () => {
+    const env = shellEnv({ PATH: '/usr/bin' }, '/app', 'darwin')
+    expect(env.TERM_PROGRAM).toBe('gitspynx')
+    expect(env.COLORTERM).toBe('truecolor')
+    expect(env.LANG).toBe('en_US.UTF-8')
+    expect(shellEnv({ PATH: '/usr/bin', LANG: 'de_DE.UTF-8' }, '/app', 'darwin').LANG).toBe('de_DE.UTF-8')
   })
 })

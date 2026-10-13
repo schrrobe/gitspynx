@@ -9,11 +9,9 @@
     "build": "electron-vite build",
     "start": "electron-vite preview",
     "test": "vitest run",
-    "typecheck": "vue-tsc --noEmit -p tsconfig.json",
-    "postinstall": "electron-rebuild -f -w node-pty"
+    "typecheck": "vue-tsc --noEmit -p tsconfig.json"
   },
   "devDependencies": {
-    "@electron/rebuild": "^4.2.1",
     "@types/node": "^24.19.2",
     "@vitejs/plugin-vue": "^6.0.10",
     "@xterm/addon-fit": "^0.11.0",

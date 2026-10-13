@@ -143,7 +143,7 @@ async function deleteWorkspace(name: string) {
         <button :disabled="!!repo.busy || !repo.status.length" title="Rechtsklick: mit Nachricht" @click="repo.stash()" @contextmenu.prevent="stashWithMessage">Stash</button>
         <button :disabled="!!repo.busy || !repo.info.stashes.length" @click="repo.popLatestStash()">Pop</button>
       </div>
-      <button :class="{ on: terminalOpen }" :aria-pressed="terminalOpen" @click="terminalOpen = !terminalOpen">Terminal</button>
+      <button :class="{ on: terminalOpen }" :aria-pressed="terminalOpen" title="Terminal ein-/ausblenden (Shells laufen weiter)" @click="terminalOpen = !terminalOpen">Terminal</button>
       <button @click="repo.refresh()">Aktualisieren</button>
       <button @click="pick">Öffnen…</button>
       <button @click="closeRepo">Schließen</button>
@@ -157,7 +157,8 @@ async function deleteWorkspace(name: string) {
     <CommitList v-show="!repo.diffTarget && !repo.conflict" :key="repo.info.path" class="list" />
     <WorkdirPanel v-if="repo.selected === WIP" :key="repo.info.path" class="detail" />
     <CommitDetail v-else class="detail" />
-    <TerminalPanel v-if="terminalOpen" />
+    <!-- v-show: hiding the panel keeps the shells running -->
+    <TerminalPanel v-show="terminalOpen" :visible="terminalOpen" />
   </div>
   <PromptDialog />
   <RebaseDialog />

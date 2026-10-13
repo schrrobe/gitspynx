@@ -102,7 +102,7 @@ export interface GitspynxApi {
   removeWorktree(repo: string, path: string, force: boolean): Promise<void>
   pruneWorktrees(repo: string): Promise<void>
   updateSubmodules(repo: string, paths: string[]): Promise<void> // [] = all
-  terminalStart(repo: string): Promise<number> // login shell in the repository; returns its id
+  terminalStart(repo: string, cols: number, rows: number): Promise<number> // login shell in the repository; returns its id
   terminalWrite(id: number, data: string): Promise<void>
   terminalResize(id: number, cols: number, rows: number): Promise<void>
   terminalKill(id: number): Promise<void>

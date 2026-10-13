@@ -12,7 +12,7 @@ export interface PtyLike {
 
 type Emit = (owner: number, channel: 'terminal:data' | 'terminal:exit', id: number, payload: string | number) => void
 
-export function createTerminals(spawn: (cwd: string) => PtyLike, emit: Emit) {
+export function createTerminals(spawn: (cwd: string, cols: number, rows: number) => PtyLike, emit: Emit) {
   const terms = new Map<number, { pty: PtyLike; owner: number }>()
   let next = 1
 
@@ -23,9 +23,9 @@ export function createTerminals(spawn: (cwd: string) => PtyLike, emit: Emit) {
   }
 
   return {
-    start(owner: number, cwd: string): number {
+    start(owner: number, cwd: string, cols = 80, rows = 24): number {
+      const pty = spawn(cwd, Math.min(1000, Math.max(2, cols)), Math.min(1000, Math.max(1, rows)))
       const id = next++
-      const pty = spawn(cwd)
       terms.set(id, { pty, owner })
       pty.onData((data) => emit(owner, 'terminal:data', id, data))
       pty.onExit(({ exitCode }) => {
@@ -45,4 +45,21 @@ export function createTerminals(spawn: (cwd: string) => PtyLike, emit: Emit) {
       for (const [id, t] of terms) if (t.owner === owner) (t.pty.kill(), terms.delete(id))
     }
   }
+}
+
+// The environment for a user's shell: main's own, minus what only describes how gitspynx was
+// launched (npm scripts, electron-vite, NODE_ENV, our node_modules/.bin on PATH), so tools in the
+// terminal behave as in any other terminal.
+export function shellEnv(env: Record<string, string | undefined>, appDir: string, platform: string): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const [k, v] of Object.entries(env)) {
+    if (v === undefined || /^(NODE_ENV|NODE_ENV_ELECTRON_VITE|INIT_CWD)$/.test(k) || /^(ELECTRON_|npm_)/i.test(k)) continue
+    out[k] = v
+  }
+  const sep = platform === 'win32' ? ';' : ':'
+  if (out.PATH) out.PATH = out.PATH.split(sep).filter((p) => !p.startsWith(appDir)).join(sep)
+  out.TERM_PROGRAM = 'gitspynx'
+  out.COLORTERM = 'truecolor'
+  if (platform === 'darwin' && !out.LANG) out.LANG = 'en_US.UTF-8' // Dock-launched apps get no locale
+  return out
 }

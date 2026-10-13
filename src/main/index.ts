@@ -1,6 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme } from 'electron'
 import { readFile, writeFile } from 'node:fs/promises'
-import * as pty from 'node-pty'
 import { basename, dirname, join } from 'node:path'
 import { type DiffTarget, type GitspynxApi, type HunkSelection, type RebaseStep, type UndoStep, MAX_LOG_PAGE, type MenuItem, type RepoChange, type Resolution, type Session } from '../shared/types'
 import {
@@ -47,7 +46,7 @@ import {
 } from './git'
 import { parseSettings, type Settings } from '../shared/settings'
 import { jsonFile, latestOnly, sessionFile, withoutWorkspace, withTabs, withWorkspace } from './session'
-import { createTerminals } from './terminal'
+import { createTerminals, shellEnv } from './terminal'
 import { type RepoWatcher, watchRepo } from './watch'
 
 const recentFile = () => join(app.getPath('userData'), 'recent.json')
@@ -57,8 +56,14 @@ const loadSession = () => store().load()
 const storeSession = (next: Session) => store().save(next)
 // Login shell so PATH etc. match the user's terminal even when the app was started from the Dock.
 const shell = process.platform === 'win32' ? (process.env.COMSPEC ?? 'powershell.exe') : (process.env.SHELL ?? '/bin/sh')
+// node-pty is loaded on first use: a broken native build then only disables the terminal.
+let ptyModule: typeof import('node-pty') | null = null
 const terminals = createTerminals(
-  (cwd) => pty.spawn(shell, process.platform === 'win32' ? [] : ['-l'], { name: 'xterm-256color', cwd, cols: 80, rows: 24, env: process.env as Record<string, string> }),
+  (cwd, cols, rows) => {
+    ptyModule ??= require('node-pty') as typeof import('node-pty')
+    const env = shellEnv(process.env, app.getAppPath(), process.platform)
+    return ptyModule.spawn(shell, process.platform === 'win32' ? [] : ['-l'], { name: 'xterm-256color', cwd, cols, rows, env })
+  },
   (owner, channel, id, payload) => {
     const wc = BrowserWindow.getAllWindows().map((w) => w.webContents).find((w) => w.id === owner)
     if (wc && !wc.isDestroyed()) wc.send(channel, id, payload)
@@ -304,13 +309,13 @@ const handlers: Handlers = {
   },
   removeWorktree: (_s, repo, path, force) => removeWorktree(knownRepo(repo), str(path), force === true),
   pruneWorktrees: (_s, repo) => pruneWorktrees(knownRepo(repo)),
-  terminalStart: async (sender, repo) => {
+  terminalStart: async (sender, repo, cols, rows) => {
     if (!terminalOwners.has(sender.id)) {
       terminalOwners.add(sender.id)
       const id = sender.id
       sender.once('destroyed', () => (terminals.killAll(id), terminalOwners.delete(id)))
     }
-    return terminals.start(sender.id, knownRepo(repo))
+    return terminals.start(sender.id, knownRepo(repo), int(cols, 100_000), int(rows, 100_000))
   },
   terminalWrite: async (sender, id, data) => {
     if (typeof data !== 'string' || data.length > 1_000_000) throw new GitError('invalid argument')
