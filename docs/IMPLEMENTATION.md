@@ -40,16 +40,17 @@ Alle Meilensteine **M0–M10** der Roadmap sind umgesetzt (Branch `feat/m0-m1-sc
 ### Abweichungen vom Plan
 
 - [ ] 6. Interaktiver Rebase: Umsortieren per ↑/↓ statt Drag & Drop, keine „edit"-Aktion
-- [ ] 7. Akzeptanz „100k-Commit-Repo scrollt flüssig" nur über Benchmarks (Layout von 150k Commits in 58 ms), nicht an einem echten Repo gemessen
+- [x] 7. Großes echtes Repo gemessen: git/git mit 85.545 Commits (bis zu 317 Linien pro Zeile, Graph 158 Spuren breit). Erste Anzeige 1,4 s, „Alle laden" 2,8 s, Scrollen ohne lange Tasks (längster Frame 9,3 ms), Sprung an beliebige Stelle ≤ 20 ms, Suche über alles 26 ms, JS-Heap 99 MB. Dafür optimiert: gerade Spuren kompakt gespeichert und je Farbe als ein Pfad gezeichnet, Layout nur für neu geladene Seiten (vorher 1071 MB Renderer-Speicher, „Alle laden" 6–7 s, Sprünge bis 91 ms).
+  - [ ] Bei sehr breiten Graphen (git/git: ~2200 px) verschwinden Betreff, Autor und Datum aus dem Bild – Graph-Spalte begrenzen oder in der Breite verstellbar machen
 
 ### Kleinere Punkte
 
-- [ ] 8. Commits, die nur über die Basis eines Stashs erreichbar sind, fehlen im Graph
-- [ ] 9. Zeilenauswahl im Diff nur per Maus; Shift-Klick in einen anderen Hunk verwirft die Auswahl
-- [ ] 10. `rebase.updateRefs=true`: die `update-ref`-Zeilen gehen beim interaktiven Rebase verloren
-- [ ] 11. Merge rückgängig (`reset --keep`) nimmt auch unbeteiligte gestagte Änderungen aus dem Index
-- [ ] 12. `submodule.<name>.update=none` gibt keine Rückmeldung
-- [ ] 13. Keine Drosselung/Bündelung sehr großer Terminal-Ausgaben
+- [x] 8. Die Basis eines Stashs bleibt im Graph, auch wenn kein Branch sie mehr erreicht
+- [x] 9. Zeilenauswahl über mehrere Hunks (Shift-Klick) und per Tastatur (↑/↓, Shift, Leertaste, Enter); gestagt wird Hunk für Hunk von unten. Dabei behoben: ein externer Commit/Reset/Checkout ließ den offenen Diff veraltet stehen, und eine ältere Diff-Antwort konnte eine neuere überschreiben
+- [x] 10. `rebase.updateRefs=true`: der interaktive Rebase setzt die `update-ref`-Zeilen selbst (nicht für den aktuellen Branch und nicht für Branches in anderen Worktrees)
+- [x] 11. Merge rückgängig stellt unbeteiligte gestagte Änderungen nach `reset --keep` wieder her
+- [x] 12. Von git übersprungene Submodule (`update = none`) werden in einem Hinweis genannt
+- [x] 13. Terminal-Ausgabe wird gebündelt (wenige ms, höchstens 64K Zeichen je Nachricht); kommt das Fenster nicht hinterher (> 512K unbestätigte Zeichen), wird die Shell pausiert, bis es aufgeholt hat. Gemessen: 2 Mio. Zeilen in 1,3 s ohne Ruckler
 - [ ] 14. Später hinzugekommene verschachtelte Submodule lassen sich nicht aus der Oberfläche initialisieren
 - [ ] 15. „Git LFS: Muster tracken…" ist auch ohne git-lfs klickbar (klare Fehlermeldung)
 
@@ -60,7 +61,7 @@ Alle Meilensteine **M0–M10** der Roadmap sind umgesetzt (Branch `feat/m0-m1-sc
 - Fehler in einem Hintergrund-Tab erscheinen erst beim Wechsel dorthin
 - Nach einem Dateisystem-Fehler startet der Watcher erst beim nächsten Neuladen/Tabwechsel neu
 - Eine hängende SSH-Übertragung wird erst nach 30 Minuten abgebrochen
-- Große Historien: inaktive Tabs laden beim Wechsel neu, Diffs zeigen höchstens 5000 Zeilen, Graph-Layout und Suche laufen im UI-Thread
+- Große Historien: inaktive Tabs laden beim Wechsel neu, Diffs zeigen höchstens 5000 Zeilen, Graph-Layout und Suche laufen im UI-Thread (bei 85k Commits unkritisch, siehe 7)
 - AltGr: falls Chromium auf AltGr-Layouts auch echtes Ctrl+Alt als AltGr meldet, würden Kürzel wie Ctrl+Alt+X dort als X gelesen (nicht geprüft)
 - Kein `git revert` aus der Oberfläche, keine Inhaltssuche (`git log -S/-G`), kein „Hunk verwerfen", keine Worktree-Sperre/-Verschiebung, Submodule ohne add/remove/sync, Terminal mit fester Höhe und einer Shell je Repo
 
