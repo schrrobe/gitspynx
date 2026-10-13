@@ -374,6 +374,7 @@ const handlers: Handlers = {
   },
   terminalResize: async (sender, id, cols, rows) => terminals.resize(sender.id, int(id, 1e9), int(cols, 100_000), int(rows, 100_000)),
   terminalKill: async (sender, id) => terminals.kill(sender.id, int(id, 1e9)),
+  terminalAck: async (sender, id, chars) => terminals.ack(sender.id, int(id, 1e9), int(chars, 1e9)),
   async updateSubmodules(_s, repo, p) {
     const path = knownRepo(repo)
     if (!Array.isArray(p)) throw new GitError('invalid argument')

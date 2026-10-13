@@ -8,42 +8,93 @@ export interface PtyLike {
   write(data: string): void
   resize(cols: number, rows: number): void
   kill(): void
+  pause(): void
+  resume(): void
 }
 
 type Emit = (owner: number, channel: 'terminal:data' | 'terminal:exit', id: number, payload: string | number) => void
 
+// Output is sent in bursts (a few ms, at most 64K chars per message). The window acknowledges what
+// xterm has rendered; with more than HIGH chars outstanding the shell is paused until it is back
+// under LOW, so `cat huge.log` cannot flood IPC and the renderer.
+const FLUSH_MS = 5
+const MAX_BATCH = 64 * 1024
+const HIGH = 512 * 1024
+const LOW = 128 * 1024
+
+interface Term {
+  pty: PtyLike
+  owner: number
+  pending: string
+  timer: ReturnType<typeof setTimeout> | null
+  unacked: number
+  paused: boolean
+}
+
 export function createTerminals(spawn: (cwd: string, cols: number, rows: number) => PtyLike, emit: Emit) {
-  const terms = new Map<number, { pty: PtyLike; owner: number }>()
+  const terms = new Map<number, Term>()
   let next = 1
 
   function own(owner: number, id: number) {
     const t = terms.get(id)
     if (!t || t.owner !== owner) throw new Error('unknown terminal')
-    return t.pty
+    return t
+  }
+
+  function flush(id: number, t: Term) {
+    if (t.timer) clearTimeout(t.timer)
+    t.timer = null
+    if (!t.pending) return
+    const data = t.pending
+    t.pending = ''
+    t.unacked += data.length
+    emit(t.owner, 'terminal:data', id, data)
+    if (t.unacked > HIGH && !t.paused) {
+      t.paused = true
+      t.pty.pause()
+    }
   }
 
   return {
     start(owner: number, cwd: string, cols = 80, rows = 24): number {
       const pty = spawn(cwd, Math.min(1000, Math.max(2, cols)), Math.min(1000, Math.max(1, rows)))
       const id = next++
-      terms.set(id, { pty, owner })
-      pty.onData((data) => emit(owner, 'terminal:data', id, data))
+      const t: Term = { pty, owner, pending: '', timer: null, unacked: 0, paused: false }
+      terms.set(id, t)
+      pty.onData((data) => {
+        t.pending += data
+        if (t.pending.length >= MAX_BATCH) flush(id, t)
+        else t.timer ??= setTimeout(() => flush(id, t), FLUSH_MS)
+      })
       pty.onExit(({ exitCode }) => {
+        flush(id, t)
         terms.delete(id)
         emit(owner, 'terminal:exit', id, exitCode)
       })
       return id
     },
-    write: (owner: number, id: number, data: string) => own(owner, id).write(data),
+    write: (owner: number, id: number, data: string) => own(owner, id).pty.write(data),
     resize: (owner: number, id: number, cols: number, rows: number) =>
-      own(owner, id).resize(Math.min(1000, Math.max(2, cols)), Math.min(1000, Math.max(1, rows))),
+      own(owner, id).pty.resize(Math.min(1000, Math.max(2, cols)), Math.min(1000, Math.max(1, rows))),
+    // The window rendered `chars` more characters of this terminal's output.
+    ack(owner: number, id: number, chars: number) {
+      const t = own(owner, id)
+      t.unacked = Math.max(0, t.unacked - chars)
+      if (t.paused && t.unacked < LOW) {
+        t.paused = false
+        t.pty.resume()
+      }
+    },
     kill(owner: number, id: number) {
-      own(owner, id).kill()
+      const t = own(owner, id)
+      if (t.timer) clearTimeout(t.timer)
+      t.pty.kill()
       terms.delete(id)
     },
     killAll(owner: number) {
       for (const [id, t] of terms) {
         if (t.owner !== owner) continue
+        if (t.timer) clearTimeout(t.timer)
         t.pty.kill()
         terms.delete(id)
       }

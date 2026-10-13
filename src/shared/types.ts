@@ -119,6 +119,7 @@ export interface GitspynxApi {
   terminalWrite(id: number, data: string): Promise<void>
   terminalResize(id: number, cols: number, rows: number): Promise<void>
   terminalKill(id: number): Promise<void>
+  terminalAck(id: number, chars: number): Promise<void> // output rendered; flow control in main
   askpassReply(id: number, answer: string | null): Promise<void>
   commit(repo: string, message: string, amend: boolean): Promise<void>
   createBranch(repo: string, name: string, start: string, switchTo: boolean): Promise<void>

@@ -35,6 +35,7 @@ const methods: (keyof GitspynxApi)[] = [
   'terminalWrite',
   'terminalResize',
   'terminalKill',
+  'terminalAck',
   'commit',
   'createBranch',
   'checkout',

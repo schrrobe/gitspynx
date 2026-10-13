@@ -64,7 +64,10 @@ async function show() {
   if (repo.info?.path === path && props.visible) s.term.focus() // never focus a terminal that is hidden by now
 }
 
-const stopData = window.gitspynx.onTerminalData((id, data) => byId.get(id)?.term.write(data))
+// Acknowledged once xterm has processed it, so main can pause a shell that floods the window.
+const stopData = window.gitspynx.onTerminalData((id, data) =>
+  byId.get(id)?.term.write(data, () => void window.gitspynx.terminalAck(id, data.length).catch(() => {}))
+)
 const stopExit = window.gitspynx.onTerminalExit((id, code) => {
   const s = byId.get(id)
   if (!s) return

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createTerminals, mergePath, type PtyLike, shellEnv } from './terminal'
 
 function fakePty() {
@@ -6,6 +6,7 @@ function fakePty() {
     written: [] as string[],
     size: [80, 24],
     killed: false,
+    paused: false,
     dataCb: (_d: string) => {},
     exitCb: (_e: { exitCode: number }) => {},
     onData(cb: (d: string) => void) {
@@ -22,6 +23,12 @@ function fakePty() {
     },
     kill() {
       p.killed = true
+    },
+    pause() {
+      p.paused = true
+    },
+    resume() {
+      p.paused = false
     }
   }
   return p
@@ -44,16 +51,41 @@ function setup() {
 }
 
 describe('terminals', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
   it('starts a shell in the repository and forwards its output and exit to the owner', () => {
     const { t, ptys, cwds, events } = setup()
     const id = t.start(1, '/repo')
     expect(cwds).toEqual(['/repo'])
     ptys[0].dataCb('hello')
-    ptys[0].exitCb({ exitCode: 0 })
+    ptys[0].exitCb({ exitCode: 0 }) // pending output goes out before the exit
     expect(events).toEqual([
       [1, 'terminal:data', id, 'hello'],
       [1, 'terminal:exit', id, 0]
     ])
+  })
+
+  it('sends bursts of output as one message', () => {
+    const { t, ptys, events } = setup()
+    const id = t.start(1, '/repo')
+    for (const chunk of ['a', 'b', 'c']) ptys[0].dataCb(chunk)
+    expect(events).toEqual([])
+    vi.runAllTimers()
+    expect(events).toEqual([[1, 'terminal:data', id, 'abc']])
+  })
+
+  it('pauses the shell while the window lags behind and resumes after it caught up', () => {
+    const { t, ptys } = setup()
+    const id = t.start(1, '/repo')
+    ptys[0].dataCb('x'.repeat(600_000))
+    vi.runAllTimers()
+    expect(ptys[0].paused).toBe(true)
+    expect(() => t.ack(2, id, 600_000)).toThrow() // only the owner
+    t.ack(1, id, 300_000)
+    expect(ptys[0].paused).toBe(true) // still above the low-water mark
+    t.ack(1, id, 300_000)
+    expect(ptys[0].paused).toBe(false)
   })
 
   it('only lets the owning window write, resize or kill', () => {
