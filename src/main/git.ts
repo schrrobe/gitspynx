@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { existsSync, realpathSync } from 'node:fs'
-import { lstat, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import type { Commit, CommitDetail, ConflictVersions, DiffTarget, FileDiff, FileStatus, HunkSelection, Operation, RebaseCommit, RebaseStep, RepoInfo, Resolution, Submodule, UndoStep, Worktree, LfsInfo } from '../shared/types'
 import { hunkKey } from '../shared/hunk'
@@ -752,27 +752,51 @@ export async function pruneWorktrees(repo: string): Promise<void> {
 
 // From the index (cheap: no per-submodule `git describe` like `submodule status`): gitlinks are
 // mode 160000; initialized = has a .git; modified = checked-out commit differs from the recorded one.
-export async function listSubmodules(repo: string): Promise<Submodule[]> {
-  // ponytail: no .gitmodules → skip reading the whole index; embedded repos without a mapping are then not listed
-  if (!existsSync(join(repo, '.gitmodules'))) return []
-  const [index, changed] = await Promise.all([
-    run(['ls-files', '-s', '-z'], repo),
+// Gitlinks (mode 160000) of the index. Reading the whole index is costly in big repositories, so
+// it is read again only after the index file changed (mtime/size).
+const gitlinkCache = new Map<string, { stamp: string; links: { path: string; sha: string; stage: string }[] }>()
+async function gitlinks(repo: string) {
+  const indexFile = resolve(repo, (await run(['rev-parse', '--git-path', 'index'], repo)).stdout.trim())
+  const st = await stat(indexFile).catch(() => null)
+  if (!st) return []
+  const stamp = `${st.mtimeMs}:${st.size}`
+  const hit = gitlinkCache.get(repo)
+  if (hit?.stamp === stamp) return hit.links
+  const links = (await run(['ls-files', '-s', '-z'], repo)).stdout
+    .split('\0')
+    .map((entry) => /^160000 ([0-9a-f]+) (\d)\t(.*)$/s.exec(entry))
+    .filter((m): m is RegExpExecArray => !!m)
+    .map(([, sha, stage, path]) => ({ path, sha, stage }))
+  gitlinkCache.set(repo, { stamp, links })
+  return links
+}
+
+// Submodules of the repository, and those of initialized submodules (path prefixed, `parent` set).
+// A gitlink without a .gitmodules entry (an embedded repository added with `git add`) is listed
+// as 'unmapped': it can be opened but not updated, git has no URL for it.
+export async function listSubmodules(repo: string, prefix = '', parent?: string): Promise<Submodule[]> {
+  const links = await gitlinks(repo)
+  if (!links.length) return []
+  const hasMap = existsSync(join(repo, '.gitmodules'))
+  const [mapOut, changed] = await Promise.all([
+    hasMap ? run(['config', '-z', '-f', '.gitmodules', '--get-regexp', '^submodule\\..*\\.path$'], repo, [0, 1]) : null,
     run(['diff-files', '--ignore-submodules=dirty', '--name-only', '-z'], repo)
   ])
+  // -z: "key\nvalue\0" — names (and so keys) may contain spaces
+  const mapped = new Set((mapOut?.stdout ?? '').split('\0').filter(Boolean).map((e) => e.slice(e.indexOf('\n') + 1)))
   const modified = new Set(changed.stdout.split('\0'))
   const byPath = new Map<string, Submodule>()
-  for (const entry of index.stdout.split('\0')) {
-    const m = /^160000 ([0-9a-f]+) (\d)\t(.*)$/s.exec(entry)
-    if (!m) continue
-    const [, sha, stage, path] = m
-    if (stage !== '0') {
-      byPath.set(path, { path, sha, state: 'conflict' })
-      continue
-    }
-    const state = !existsSync(join(repo, path, '.git')) ? 'uninitialized' : modified.has(path) ? 'modified' : 'ok'
-    byPath.set(path, { path, sha, state })
+  for (const { path, sha, stage } of links) {
+    const state = stage !== '0' ? 'conflict' : !mapped.has(path) ? 'unmapped' : !existsSync(join(repo, path, '.git')) ? 'uninitialized' : modified.has(path) ? 'modified' : 'ok'
+    byPath.set(path, { path: prefix + path, sha, state, ...(parent ? { parent } : {}) })
   }
-  return [...byPath.values()]
+  const result: Submodule[] = []
+  for (const [path, sub] of byPath) {
+    result.push(sub)
+    if ((sub.state === 'ok' || sub.state === 'modified') && existsSync(join(repo, path, '.gitmodules')))
+      result.push(...(await listSubmodules(join(repo, path), `${sub.path}/`, sub.path).catch(() => [])))
+  }
+  return result
 }
 
 // Given paths: initialize (if needed) and update just those. Empty: update the initialized ones
@@ -782,11 +806,26 @@ export async function listSubmodules(repo: string): Promise<Submodule[]> {
 // Resolves to the submodules git skipped (update = none in .gitmodules or the local config).
 export async function updateSubmodules(repo: string, paths: string[]): Promise<string[]> {
   const stall = ['-c', 'http.lowSpeedLimit=1000', '-c', 'http.lowSpeedTime=60']
-  const args = paths.length
-    ? [...stall, 'submodule', 'update', '--progress', '--init', '--recursive', '--', ...paths.map((p) => `:(literal)${p}`)]
-    : [...stall, 'submodule', 'update', '--progress', '--recursive']
-  const result = await run(args, repo, [0], undefined, BACKSTOP, {}, STALL)
-  return [...result.stderr.matchAll(/Skipping submodule '(.+?)'$/gm)].map((m) => m[1]) // progress lines may share the line (\r)
+  const update = async (cwd: string, list: string[], prefix = '') => {
+    const args = list.length
+      ? [...stall, 'submodule', 'update', '--progress', '--init', '--recursive', '--', ...list.map((p) => `:(literal)${p}`)]
+      : [...stall, 'submodule', 'update', '--progress', '--recursive']
+    const result = await run(args, cwd, [0], undefined, BACKSTOP, {}, STALL)
+    return [...result.stderr.matchAll(/Skipping submodule '(.+?)'$/gm)].map((m) => prefix + m[1]) // progress lines may share the line (\r)
+  }
+  if (!paths.length) return update(repo, [])
+  // A nested submodule is updated from inside its parent submodule, where git knows it.
+  const known = new Map((await listSubmodules(repo)).map((s) => [s.path, s]))
+  const groups = new Map<string, string[]>() // parent ('' = this repository) → paths relative to it
+  for (const p of paths) {
+    const sub = known.get(p)
+    if (sub?.state === 'unmapped') throw new GitError(`${p} has no .gitmodules entry — git does not know where to update it from`)
+    const parent = sub?.parent ?? ''
+    groups.set(parent, [...(groups.get(parent) ?? []), parent ? p.slice(parent.length + 1) : p])
+  }
+  const skipped: string[] = []
+  for (const [parent, list] of groups) skipped.push(...(await update(parent ? join(repo, parent) : repo, list, parent ? `${parent}/` : '')))
+  return skipped
 }
 
 // ---- Git LFS ----

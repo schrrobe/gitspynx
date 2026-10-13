@@ -1292,7 +1292,7 @@ describe('submodules', () => {
     const list = await listSubmodules(clone)
     expect(list.map((x) => [x.path, x.state]).sort()).toEqual([
       ['deps/lib', 'ok'],
-      ['embedded', 'ok'],
+      ['embedded', 'unmapped'], // no .gitmodules entry: openable, not updatable
       ['odd (x)', 'ok']
     ])
     at(clone, 'rm', '-q', '-f', '--cached', 'embedded')
@@ -1322,6 +1322,45 @@ describe('submodules', () => {
     const d = await readFileDiff(clone, { path: 'deps/lib', staged: false })
     await expect(stageHunk(clone, { path: 'deps/lib', staged: false, hunk: 0, hunkHeader: d.hunks[0].header, hunkLines: hunkKey(d.hunks[0]) })).rejects.toThrow(/inside the submodule/)
     at(join(clone, 'deps', 'lib'), 'checkout', '--', 'lib.txt')
+  })
+
+  it('lists submodules nested in an initialized one and initializes them in their parent', async () => {
+    // lib gains a submodule of its own after super recorded it
+    const nested = join(root, 'nested-src')
+    mkdirSync(nested)
+    at(nested, 'init', '-q', '-b', 'main')
+    at(nested, 'commit', '-q', '--allow-empty', '-m', 'nested one')
+    const lib2 = join(root, 'lib2')
+    at(root, 'clone', '-q', join(root, 'lib'), lib2)
+    at(lib2, 'submodule', 'add', '-q', nested, 'deps/nested')
+    at(lib2, 'commit', '-q', '-m', 'add nested')
+    const top = join(root, 'top')
+    mkdirSync(top)
+    at(top, 'init', '-q', '-b', 'main')
+    at(top, 'submodule', 'add', '-q', lib2, 'deps/lib2')
+    at(top, 'commit', '-q', '-m', 'add lib2')
+    const fresh = join(root, 'top-clone')
+    at(root, 'clone', '-q', top, fresh)
+    at(fresh, 'submodule', 'update', '-q', '--init') // not recursive: the nested one stays uninitialized
+    const list = await listSubmodules(fresh)
+    expect(list.map((s) => [s.path, s.state, s.parent ?? null])).toEqual([
+      ['deps/lib2', 'ok', null],
+      ['deps/lib2/deps/nested', 'uninitialized', 'deps/lib2']
+    ])
+    await updateSubmodules(fresh, ['deps/lib2/deps/nested'])
+    expect((await listSubmodules(fresh)).find((s) => s.path === 'deps/lib2/deps/nested')?.state).toBe('ok')
+  })
+
+  it('lists an embedded repository that has no .gitmodules entry', async () => {
+    const host = join(root, 'host')
+    mkdirSync(join(host, 'vendor', 'x'), { recursive: true })
+    at(host, 'init', '-q', '-b', 'main')
+    at(join(host, 'vendor', 'x'), 'init', '-q', '-b', 'main')
+    at(join(host, 'vendor', 'x'), 'commit', '-q', '--allow-empty', '-m', 'inner')
+    at(host, '-c', 'advice.addEmbeddedRepo=false', 'add', 'vendor/x')
+    at(host, 'commit', '-q', '-m', 'embed')
+    expect((await listSubmodules(host)).map((s) => [s.path, s.state])).toEqual([['vendor/x', 'unmapped']])
+    await expect(updateSubmodules(host, ['vendor/x'])).rejects.toThrow(/no .gitmodules entry/)
   })
 
   it('returns no submodules for a repository without any', async () => {

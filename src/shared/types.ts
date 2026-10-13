@@ -60,7 +60,8 @@ export interface LfsInfo {
 export interface Submodule {
   path: string // relative to the work tree
   sha: string // recorded commit (checked-out commit when modified)
-  state: 'ok' | 'uninitialized' | 'modified' | 'conflict'
+  state: 'ok' | 'uninitialized' | 'modified' | 'conflict' | 'unmapped' // unmapped: no .gitmodules entry (embedded repository)
+  parent?: string // path of the submodule it is nested in
 }
 
 export interface Worktree {

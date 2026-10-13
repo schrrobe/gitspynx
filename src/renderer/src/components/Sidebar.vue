@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { Ref } from '../../../shared/types'
-import type { Worktree } from '../../../shared/types'
+import type { Submodule, Worktree } from '../../../shared/types'
 import { useRepo } from '../stores/repo'
 import { useTabs } from '../stores/tabs'
 
@@ -86,12 +86,17 @@ async function worktreeMenu(t: Worktree) {
   }
 }
 
-const SUB_STATE = { ok: '', uninitialized: 'nicht initialisiert', modified: 'anderer Commit', conflict: 'Konflikt' }
+const SUB_STATE = { ok: '', uninitialized: 'nicht initialisiert', modified: 'anderer Commit', conflict: 'Konflikt', unmapped: 'nicht in .gitmodules' }
 const subPath = (p: string) => `${repo.info!.path}/${p}`
 
-async function submoduleMenu(path: string, initialized: boolean) {
+// An unmapped gitlink (embedded repository without .gitmodules entry) can be opened, not updated.
+async function submoduleMenu(s: Submodule) {
+  const path = s.path
+  const initialized = s.state !== 'uninitialized'
   const id = await window.gitspynx.showContextMenu([
-    { id: 'update', label: initialized ? 'Aktualisieren' : 'Initialisieren', enabled: !repo.busy },
+    s.state === 'unmapped'
+      ? { id: 'update', label: 'Aktualisieren (ohne .gitmodules-Eintrag nicht möglich)', enabled: false }
+      : { id: 'update', label: initialized ? 'Aktualisieren' : 'Initialisieren', enabled: !repo.busy },
     { id: 'open', label: 'Als Tab öffnen', enabled: initialized },
     { separator: true },
     { id: 'all', label: 'Alle Submodule aktualisieren', enabled: !repo.busy }
@@ -163,12 +168,12 @@ async function stashMenu(sha: string) {
         v-for="s in repo.info.submodules"
         :key="s.path"
         class="item"
-        :class="{ hidden: s.state === 'uninitialized' }"
-        :title="s.state === 'uninitialized' ? `${s.path} – Doppelklick initialisiert` : `${s.path} – Doppelklick öffnet als Tab`"
+        :class="{ hidden: s.state === 'uninitialized', nested: !!s.parent }"
+        :title="s.state === 'uninitialized' ? `${s.path} – Doppelklick initialisiert` : s.state === 'unmapped' ? `${s.path} – eingebettetes Repository ohne Eintrag in .gitmodules; Doppelklick öffnet als Tab` : `${s.path} – Doppelklick öffnet als Tab`"
         @dblclick="s.state === 'uninitialized' ? repo.updateSubmodules([s.path]) : tabs.openPath(subPath(s.path))"
-        @contextmenu.prevent="submoduleMenu(s.path, s.state !== 'uninitialized')"
+        @contextmenu.prevent="submoduleMenu(s)"
       >
-        <span class="name">{{ s.path }}</span>
+        <span class="name">{{ s.parent ? s.path.slice(s.parent.length + 1) : s.path }}</span>
         <span v-if="SUB_STATE[s.state]" class="dim">{{ SUB_STATE[s.state] }}</span>
       </button>
     </section>
@@ -202,6 +207,7 @@ async function stashMenu(sha: string) {
 </template>
 
 <style scoped>
+.item.nested { padding-left: 28px; } /* inside the submodule listed above it */
 .sidebar { overflow-y: auto; border-right: 1px solid var(--border); background: var(--bg-panel); padding: 8px 0; }
 h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; margin: 12px 12px 4px; font-weight: 600; }
 .item {
