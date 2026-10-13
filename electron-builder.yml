@@ -13,6 +13,12 @@ asarUnpack:
   # native module: pty.node and the macOS spawn-helper must be real files
   - node_modules/node-pty/**
 npmRebuild: false # node-pty ships N-API prebuilds (built from source on Linux by npm ci)
+# icon: build/icon.png (1024 px, from build/icon.svg); electron-builder derives .icns/.ico
+publish:
+  provider: github
+  owner: schrrobe
+  repo: gitspynx
+  releaseType: draft # a tag push creates a draft release; publishing it stays a manual step
 mac:
   category: public.app-category.developer-tools
   target: [dmg, zip]
