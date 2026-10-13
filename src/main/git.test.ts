@@ -181,7 +181,7 @@ describe('git backend', () => {
     await expect(run(['-c', noisy, 'noisy'], dir)).rejects.toThrow(/REAL_ERROR/)
   })
 
-  it('kills the whole process tree on timeout', async () => {
+  it.skipIf(process.platform === 'win32')('kills the whole process tree on timeout', async () => { // ps-based check
     const marker = `sleep 7.${process.pid}`
     await expect(run(['-c', `alias.hang=!${marker}; true`, 'hang'], dir, [0], undefined, 300)).rejects.toThrow(/timed out/)
     await new Promise((r) => setTimeout(r, 200))
@@ -1098,7 +1098,7 @@ describe('worktrees', () => {
   const w = (...args: string[]) => execFileSync('git', args, { cwd: main, env }).toString().trim()
 
   beforeAll(() => {
-    root = realpathSync(mkdtempSync(join(tmpdir(), 'gitspynx-wt-')))
+    root = realpathSync.native(mkdtempSync(join(tmpdir(), 'gitspynx-wt-')))
     main = join(root, 'main')
     mkdirSync(main)
     w('init', '-q', '-b', 'main')
@@ -1187,7 +1187,7 @@ describe('submodules', () => {
       saved[k] = process.env[k]
       process.env[k] = v
     }
-    root = realpathSync(mkdtempSync(join(tmpdir(), 'gitspynx-sub-')))
+    root = realpathSync.native(mkdtempSync(join(tmpdir(), 'gitspynx-sub-')))
     const lib = join(root, 'lib')
     mkdirSync(lib)
     at(lib, 'init', '-q', '-b', 'main')
@@ -1292,7 +1292,7 @@ describe.skipIf(!hasLfs)('lfs', () => {
   const l = (...args: string[]) => execFileSync('git', args, { cwd: ld, env }).toString().trim()
 
   beforeAll(() => {
-    ld = realpathSync(mkdtempSync(join(tmpdir(), 'gitspynx-lfs-')))
+    ld = realpathSync.native(mkdtempSync(join(tmpdir(), 'gitspynx-lfs-')))
     l('init', '-q', '-b', 'main')
     l('commit', '-q', '--allow-empty', '-m', 'one')
   })
@@ -1312,7 +1312,7 @@ describe.skipIf(!hasLfs)('lfs', () => {
     l('commit', '-q', '-m', 'lfs file')
     expect(l('show', 'HEAD:big.bin')).toContain('version https://git-lfs.github.com/spec/v1')
     expect((await openRepo(ld)).lfs?.patterns).toEqual(['*.bin'])
-  })
+  }, 30_000) // git-lfs is slow on Windows runners
 
   it('untracks a pattern', async () => {
     await lfsUntrack(ld, '*.bin')
@@ -1326,7 +1326,7 @@ describe.skipIf(!hasLfs)('lfs', () => {
   })
 
   it('does not write hooks when a repository using LFS is opened', async () => {
-    const fresh = realpathSync(mkdtempSync(join(tmpdir(), 'gitspynx-lfs-open-')))
+    const fresh = realpathSync.native(mkdtempSync(join(tmpdir(), 'gitspynx-lfs-open-')))
     execFileSync('git', ['init', '-q'], { cwd: fresh, env })
     writeFileSync(join(fresh, '.gitattributes'), '*.bin filter=lfs diff=lfs merge=lfs -text\n')
     const info = await openRepo(fresh)
@@ -1336,7 +1336,7 @@ describe.skipIf(!hasLfs)('lfs', () => {
   })
 
   it('tracks the first pattern in a repository that already has its own pre-push hook', async () => {
-    const hooked = realpathSync(mkdtempSync(join(tmpdir(), 'gitspynx-lfs-hook-')))
+    const hooked = realpathSync.native(mkdtempSync(join(tmpdir(), 'gitspynx-lfs-hook-')))
     execFileSync('git', ['init', '-q'], { cwd: hooked, env })
     writeFileSync(join(hooked, '.git', 'hooks', 'pre-push'), '#!/bin/sh\necho mine\n', { mode: 0o755 })
     await lfsTrack(hooked, '*.psd')
@@ -1350,7 +1350,7 @@ describe('deferred fixes: backend', () => {
   let dd: string
   const d = (...args: string[]) => execFileSync('git', args, { cwd: dd, env }).toString().trim()
   beforeEach(() => {
-    dd = realpathSync(mkdtempSync(join(tmpdir(), 'gitspynx-def-')))
+    dd = realpathSync.native(mkdtempSync(join(tmpdir(), 'gitspynx-def-')))
     d('init', '-q', '-b', 'main')
     writeFileSync(join(dd, 'a.txt'), '1\n')
     d('add', '.')

@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, realpathSync } from 'node:fs'
 import { lstat, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import type { Commit, CommitDetail, ConflictVersions, DiffTarget, FileDiff, FileStatus, HunkSelection, Operation, RebaseCommit, RebaseStep, RepoInfo, Resolution, Submodule, UndoStep, Worktree, LfsInfo } from '../shared/types'
@@ -92,6 +92,18 @@ export function assertRevision(rev: string): void {
   }
 }
 
+// git prints Windows paths as C:/Users/... with long names; Node and dialogs use C:\Users\... and
+// sometimes 8.3 short names (RUNNER~1). Paths from git are compared with both, so make them native.
+function fromGit(p: string): string {
+  if (process.platform !== 'win32') return p
+  const native = resolve(p)
+  try {
+    return realpathSync.native(native)
+  } catch {
+    return native // e.g. a prunable work tree whose folder is gone
+  }
+}
+
 export async function openRepo(dir: string): Promise<RepoInfo> {
   const probe = await run(['rev-parse', '--is-bare-repository', '--is-inside-git-dir'], dir).catch((e: GitError) => {
     throw new GitError(/not a git repository/.test(e.message) ? `not a git repository: ${dir}` : e.message)
@@ -101,7 +113,7 @@ export async function openRepo(dir: string): Promise<RepoInfo> {
   // Accept the .git directory itself and open its work tree; anything deeper is ambiguous.
   if (insideGitDir === 'true' && basename(dir) !== '.git') throw new GitError('choose the working tree, not a folder inside the .git directory')
   const cwd = insideGitDir === 'true' ? dirname(dir) : dir
-  const path = (await run(['rev-parse', '--show-toplevel'], cwd)).stdout.trim()
+  const path = fromGit((await run(['rev-parse', '--show-toplevel'], cwd)).stdout.trim())
   const [branch, sha, refsOut] = await Promise.all([
     run(['symbolic-ref', '-q', '--short', 'HEAD'], path, [0, 1]),
     run(['rev-parse', '-q', '--verify', 'HEAD'], path, [0, 1]),
@@ -298,7 +310,7 @@ export async function deleteRemoteBranch(repo: string, remoteBranch: string): Pr
 // watcher on the work tree alone would miss ref and index changes.
 export async function gitDirsOutside(path: string): Promise<string[]> {
   const out = (await run(['rev-parse', '--absolute-git-dir', '--git-common-dir'], path)).stdout.trim().split('\n')
-  const dirs = [...new Set(out.map((d) => resolve(path, d)))]
+  const dirs = [...new Set(out.map((d) => fromGit(resolve(path, d))))]
   return dirs.filter((d) => d !== join(path, '.git') && !d.startsWith(path + sep))
 }
 
@@ -637,12 +649,14 @@ export async function applyUndo(repo: string, steps: UndoStep[]): Promise<void> 
 
 // -z needs git 2.36; older versions get the newline format (paths with newlines are then ambiguous).
 export async function listWorktrees(repo: string): Promise<Worktree[]> {
+  let list: Worktree[]
   try {
-    return parseWorktrees((await run(['worktree', 'list', '--porcelain', '-z'], repo)).stdout)
+    list = parseWorktrees((await run(['worktree', 'list', '--porcelain', '-z'], repo)).stdout)
   } catch (e) {
     if ((e as GitError).code !== 129) throw e // 129: unknown option
-    return parseWorktrees((await run(['worktree', 'list', '--porcelain'], repo)).stdout, '\n')
+    list = parseWorktrees((await run(['worktree', 'list', '--porcelain'], repo)).stdout, '\n')
   }
+  return list.map((t) => ({ ...t, path: fromGit(t.path) }))
 }
 
 // fromSha given: create the branch there; otherwise check out the existing branch.
