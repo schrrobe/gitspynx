@@ -147,7 +147,7 @@ describe('repo store', () => {
 
     it('remembers the upstream so undo restores tracking', async () => {
       const repo = await openedRepo()
-      repo.info!.refs = [{ name: 'x', fullName: 'refs/heads/x', kind: 'local', target: 'c9', upstream: 'origin/x', upstreamRemote: 'origin', upstreamMerge: 'refs/heads/x' }]
+      repo.info = { ...repo.info!, refs: [{ name: 'x', fullName: 'refs/heads/x', kind: 'local', target: 'c9', upstream: 'origin/x', upstreamRemote: 'origin', upstreamMerge: 'refs/heads/x' }] }
       mockApi([true], false)
       let undone: unknown[] = []
       const w = (globalThis as unknown as { window: { gitspynx: Record<string, unknown> } }).window
@@ -485,7 +485,7 @@ describe('repo store', () => {
       await flush()
       logCalls[0].d.resolve(page('c', 3))
       await first
-      w().gitspynx.openRepo = async (p: string) => ({ ...info, path: p })
+      w().gitspynx.openRepo = async (p: string) => ({ ...info, path: p, refs: [{ name: 'topic', fullName: 'refs/heads/topic', kind: 'local', target: 'b0' }] })
       const switching = repo.open('/b', 0, { selected: null, hidden: [], solo: 'refs/heads/topic' })
       await flush()
       expect(repo.viewState().solo).toBeNull() // still /r's view while /b loads
@@ -515,6 +515,77 @@ describe('repo store', () => {
     })
   })
 
+  describe('state after reloads', () => {
+    const w = () => (globalThis as unknown as { window: { gitspynx: Record<string, unknown> } }).window
+    async function opened(extra: Partial<RepoInfo> = {}) {
+      w().gitspynx.openRepo = async () => ({ ...info, ...extra })
+      w().gitspynx.readLog = async () => page('c', 3)
+      w().gitspynx.readCommit = async (_r: string, sha: string) => ({ sha })
+      const repo = useRepo()
+      await repo.open('/r')
+      return repo
+    }
+
+    it('drops a solo filter whose branch was deleted', async () => {
+      const repo = await opened({ refs: [{ name: 'x', fullName: 'refs/heads/x', kind: 'local', target: 'c1' }] })
+      await repo.toggleSolo('refs/heads/x')
+      w().gitspynx.openRepo = async () => info
+      await repo.refresh()
+      expect(repo.solo).toBeNull()
+    })
+
+    it('deselects a stash that is gone after a reload', async () => {
+      const stash = { sha: 's1', parents: ['c0'], author: 'a', email: 'a@x', date: 0, subject: 'On main: wip' }
+      const repo = await opened({ stashes: [stash] })
+      await repo.select('s1')
+      w().gitspynx.openRepo = async () => info
+      await repo.refresh()
+      expect(repo.selected).toBeNull()
+      expect(repo.detail).toBeNull()
+    })
+
+    it('keeps an error message across background reloads', async () => {
+      const repo = await opened()
+      repo.error = 'push rejected'
+      await repo.refresh(true)
+      await repo.refreshStatus()
+      expect(repo.error).toBe('push rejected')
+    })
+
+    it('keeps the rebase plan open when git refuses it', async () => {
+      const repo = await opened()
+      w().gitspynx.readHead = async () => ({ sha: 'a0', branch: 'main' })
+      repo.rebasePlan = { base: 'b0', commits: [] }
+      w().gitspynx.interactiveRebase = async () => {
+        throw new Error('an operation is in progress')
+      }
+      await repo.startRebase([])
+      expect(repo.rebasePlan).not.toBeNull()
+      w().gitspynx.interactiveRebase = async () => 'ok'
+      await repo.startRebase([])
+      expect(repo.rebasePlan).toBeNull()
+    })
+  })
+
+  it('loadAll waits for a refresh that is in flight instead of stopping', async () => {
+    const repo = useRepo()
+    const first = repo.open('/r')
+    await flush()
+    logCalls[0].d.resolve(page('a'))
+    await first
+    const reload = repo.refresh()
+    await flush()
+    const all = repo.loadAll()
+    await flush()
+    logCalls[1].d.resolve(page('a'))
+    await reload
+    await flush()
+    expect(logCalls[2]?.skip).toBe(2000)
+    logCalls[2].d.resolve(page('b', 5))
+    await all
+    expect(repo.complete).toBe(true)
+  })
+
   describe('undo/redo', () => {
     const w = () => (globalThis as unknown as { window: { gitspynx: Record<string, unknown> } }).window
     let head = 'a0'
@@ -536,6 +607,25 @@ describe('repo store', () => {
       await repo.open('/r')
       return repo
     }
+
+    it('records a merge finished via Continue', async () => {
+      const repo = await opened()
+      repo.info!.operation = 'merge'
+      w().gitspynx.continueOperation = async () => ((head = 'm1'), 'ok')
+      await repo.continueOp()
+      expect(repo.undoLabel).toBe('Merge abschließen')
+    })
+
+    it('asks before undoing a commit that is already pushed', async () => {
+      const repo = await opened()
+      await repo.commit('Add feature', false)
+      repo.info!.refs = [{ name: 'main', fullName: 'refs/heads/main', kind: 'local', target: 'b1', upstream: 'origin/main', ahead: 0, behind: 0 }]
+      let asked = ''
+      w().gitspynx.confirm = async (m: string) => ((asked = m), false)
+      await repo.undo()
+      expect(asked).toMatch(/gepusht/)
+      expect(applied).toEqual([])
+    })
 
     it('records a commit and undoes / redoes it with a soft reset', async () => {
       const repo = await opened()

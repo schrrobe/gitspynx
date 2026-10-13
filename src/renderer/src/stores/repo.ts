@@ -59,9 +59,12 @@ export const useRepo = defineStore('repo', () => {
     error.value = e instanceof Error ? e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '') : String(e)
   }
 
-  async function guard(fn: () => Promise<void>) {
-    error.value = null
-    notice.value = null
+  // background: a reload nobody asked for (watcher) keeps the messages of the last action
+  async function guard(fn: () => Promise<void>, background = false) {
+    if (!background) {
+      error.value = null
+      notice.value = null
+    }
     try {
       await fn()
     } catch (e) {
@@ -86,8 +89,16 @@ export const useRepo = defineStore('repo', () => {
 
   // Reads repo state and the first pages again; keepCount keeps at least that many commits loaded;
   // view restores a tab's remembered selection and filters.
-  const open = (path: string, keepCount = 0, view?: View) =>
-    guard(async () => {
+  // view may depend on the repository root the path resolves to (a subfolder of an open tab).
+  let loadRun: Promise<void> | null = null // open or page load in flight, awaited by loadAll
+  function tracked(p: Promise<void>) {
+    loadRun = p
+    void p.finally(() => loadRun === p && (loadRun = null))
+    return p
+  }
+
+  const open = (path: string, keepCount = 0, view?: View | ((root: string) => View | undefined), background = false) =>
+    tracked(guard(async () => {
       const gen = ++generation
       loading.value = true
       try {
@@ -95,8 +106,13 @@ export const useRepo = defineStore('repo', () => {
         // Filters belong to the repository they were set in; they only become visible once this
         // load wins, so a tab switched away from meanwhile never remembers another tab's filters.
         const switching = next.path !== info.value?.path
-        const nextHidden = switching ? new Set(view?.hidden) : hidden.value
-        const nextSolo = switching ? (view?.solo ?? null) : solo.value
+        const v = typeof view === 'function' ? view(next.path) : view
+        // Filters on refs that no longer exist (deleted, pruned) are dropped.
+        const known = new Set(next.refs.map((r) => r.fullName))
+        let nextHidden = switching ? new Set(v?.hidden) : hidden.value
+        if ([...nextHidden].some((n) => !known.has(n))) nextHidden = new Set([...nextHidden].filter((n) => known.has(n)))
+        let nextSolo = switching ? (v?.solo ?? null) : solo.value
+        if (nextSolo && !known.has(nextSolo)) nextSolo = null
         const limit = Math.min(Math.max(PAGE, keepCount), MAX_LOG_PAGE)
         const [first, files] = await Promise.all([
           window.gitspynx.readLog(next.path, 0, limit, tipsFor(next, nextHidden, nextSolo)),
@@ -106,6 +122,11 @@ export const useRepo = defineStore('repo', () => {
         hidden.value = nextHidden
         solo.value = nextSolo
         const samePath = info.value?.path === next.path
+        const sel = selected.value
+        if (samePath && sel && info.value?.stashes.some((x) => x.sha === sel) && !next.stashes.some((x) => x.sha === sel)) {
+          selected.value = null // the shown stash was popped or dropped
+          detail.value = null
+        }
         info.value = next
         commits.value = first
         status.value = files
@@ -116,18 +137,19 @@ export const useRepo = defineStore('repo', () => {
           diffTarget.value = null
           diff.value = null
           conflict.value = null
-          if (view?.selected) void select(view.selected)
+          if (v?.selected) void select(v.selected)
         }
       } finally {
         if (gen === generation) loading.value = false
       }
-    })
+    }, background))
 
-  const refresh = () => info.value && open(info.value.path, commits.value.length)
+  const refresh = (background = false) => info.value && open(info.value.path, commits.value.length, undefined, background)
 
-  const loadMore = () =>
-    guard(async () => {
-      if (!info.value || loading.value || complete.value) return
+  const loadMore = () => {
+    if (!info.value || loading.value || complete.value) return Promise.resolve()
+    return tracked(guard(async () => {
+      if (!info.value) return
       const gen = generation
       loading.value = true
       try {
@@ -138,7 +160,8 @@ export const useRepo = defineStore('repo', () => {
       } finally {
         if (gen === generation) loading.value = false
       }
-    })
+    }))
+  }
 
   async function select(sha: string) {
     if (!info.value) return
@@ -183,17 +206,17 @@ export const useRepo = defineStore('repo', () => {
       const f = status.value.find((s) => s.path === t.path)
       const stillThere = f && (t.staged ? f.staged : f.unstaged)
       const other = f && (t.staged ? f.unstaged : f.staged)
-      await openDiff(!stillThere && other ? { path: t.path, staged: !t.staged } : t)
-    })
+      await openDiff(!stillThere && other ? { path: t.path, staged: !t.staged } : t, true)
+    }, true) // a follow-up reload: the triggering action already reset the messages
 
-  const openDiff = (target: DiffTarget) =>
+  const openDiff = (target: DiffTarget, background = false) =>
     guard(async () => {
       if (!info.value) return
       conflict.value = null
       diffTarget.value = target
       const d = await window.gitspynx.readFileDiff(info.value.path, target)
       if (diffTarget.value === target) diff.value = d
-    })
+    }, background)
 
   const closeDiff = () => {
     diffTarget.value = null
@@ -223,8 +246,13 @@ export const useRepo = defineStore('repo', () => {
   async function startRebase(steps: RebaseStep[]) {
     const plan = rebasePlan.value
     if (!plan) return
-    rebasePlan.value = null
-    await integrate((r) => window.gitspynx.interactiveRebase(r, plan.base, steps), 'Interaktiver Rebase')
+    let accepted = false // the dialog stays open (typed messages kept) while git refuses the plan
+    await integrate(async (r) => {
+      const result = await window.gitspynx.interactiveRebase(r, plan.base, steps)
+      accepted = true
+      return result
+    }, 'Interaktiver Rebase')
+    if (accepted && rebasePlan.value === plan) rebasePlan.value = null
   }
 
   const stageHunk = (sel: Omit<HunkSelection, 'path' | 'staged'>) =>
@@ -269,6 +297,16 @@ export const useRepo = defineStore('repo', () => {
     const path = info.value.path
     const entry = histories.value.get(path)?.[direction].at(-1)
     if (!entry) return
+    // ahead 0 with an upstream: the commit being taken back is already on the remote
+    const reset = entry[direction].find((s) => s.type === 'reset' && s.mode === 'soft')
+    const branch = reset?.type === 'reset' ? info.value.refs.find((r) => r.kind === 'local' && r.name === reset.branch) : undefined
+    if (
+      direction === 'undo' &&
+      branch?.upstream &&
+      !branch.ahead &&
+      !(await window.gitspynx.confirm(`„${entry.label}“ ist bereits gepusht.`, 'Rückgängig nimmt den Commit nur lokal zurück; auf dem Remote bleibt er.', 'Trotzdem rückgängig'))
+    )
+      return
     undoing.value = true
     try {
       const ok = await mutate((r) => window.gitspynx.applyUndo(r, entry[direction]))
@@ -439,7 +477,9 @@ export const useRepo = defineStore('repo', () => {
 
   const mergeInto = (rev: string) => integrate((r) => window.gitspynx.merge(r, rev), `Merge „${rev.length === 40 ? rev.slice(0, 7) : rev}“`)
   const cherryPick = (sha: string) => integrate((r) => window.gitspynx.cherryPick(r, sha), `Cherry-Pick ${sha.slice(0, 7)}`)
-  const continueOp = () => integrate((r) => window.gitspynx.continueOperation(r))
+  // Recorded when HEAD stays on its branch (merge, cherry-pick, revert); a rebase runs detached.
+  const continueOp = () =>
+    integrate((r) => window.gitspynx.continueOperation(r), info.value?.operation ? `${OP_NAMES[info.value.operation]} abschließen` : undefined)
   const skipOp = () => integrate((r) => window.gitspynx.skipOperation(r))
 
   async function rebaseOnto(rev: string) {
@@ -528,9 +568,13 @@ export const useRepo = defineStore('repo', () => {
 
   async function loadAll() {
     while (info.value && !complete.value) {
+      if (loadRun) {
+        await loadRun // a reload or page load is running; continue after it
+        continue
+      }
       const before = commits.value.length
       await loadMore()
-      if (commits.value.length === before) break // error or superseded
+      if (commits.value.length === before && !loadRun) break // error
     }
   }
 

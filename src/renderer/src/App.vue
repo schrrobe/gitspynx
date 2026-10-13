@@ -52,7 +52,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
 // File changes on disk: refs/HEAD changes reload history, work tree/index changes only the status.
 const stopWatching = window.gitspynx.onRepoChanged(({ repo: path, kind }) => {
   if (path !== repo.info?.path) return
-  if (kind === 'history') repo.refresh()
+  if (kind === 'history') repo.refresh(true)
   else repo.refreshStatus()
 })
 onUnmounted(stopWatching)

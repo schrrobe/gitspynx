@@ -42,6 +42,7 @@ const ZOOM_STEPS = [0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2]
 export function buildCommands({ repo, tabs, settings, pickRepo }: Context): Command[] {
   const open = () => !!repo.info
   const idle = () => open() && !repo.busy
+  const onBranch = () => idle() && !!repo.info?.head.branch // pull/push need a branch, not a detached HEAD
   const zoom = (dir: 1 | -1) => {
     const i = ZOOM_STEPS.findIndex((z) => z >= settings.settings.zoom)
     const next = ZOOM_STEPS[Math.min(ZOOM_STEPS.length - 1, Math.max(0, (i === -1 ? 2 : i) + dir))]
@@ -79,8 +80,8 @@ export function buildCommands({ repo, tabs, settings, pickRepo }: Context): Comm
     { id: 'terminal.toggle', title: 'Terminal ein-/ausblenden', keys: 'Ctrl+`', enabled: open, run: () => (terminalOpen.value = !terminalOpen.value) },
     { id: 'repo.refresh', title: 'Aktualisieren', keys: 'Mod+R', enabled: open, run: () => repo.refresh() },
     { id: 'repo.fetch', title: 'Fetch', keys: 'Mod+L', enabled: idle, run: () => repo.fetchAll() },
-    { id: 'repo.pull', title: 'Pull', keys: 'Mod+Shift+L', enabled: idle, run: () => repo.pullBranch(settings.settings.pullMode) },
-    { id: 'repo.push', title: 'Push', keys: 'Mod+Shift+K', enabled: idle, run: () => repo.pushBranch() },
+    { id: 'repo.pull', title: 'Pull', keys: 'Mod+Shift+L', enabled: onBranch, run: () => repo.pullBranch(settings.settings.pullMode) },
+    { id: 'repo.push', title: 'Push', keys: 'Mod+Shift+K', enabled: onBranch, run: () => repo.pushBranch() },
     {
       id: 'submodules.update',
       title: 'Alle Submodule initialisieren/aktualisieren',

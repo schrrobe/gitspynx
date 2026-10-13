@@ -60,7 +60,7 @@ export const useTabs = defineStore('tabs', () => {
     if (existing !== -1) return activate(existing)
     remember()
     const my = ++seq
-    await repo.open(path)
+    await repo.open(path, 0, (root) => views.get(root)) // a subfolder of an open tab gets its view back
     if (my !== seq || repo.error || !repo.info) return
     if (!tabs.value.includes(repo.info.path)) tabs.value = [...tabs.value, repo.info.path]
     syncActive()
@@ -87,6 +87,7 @@ export const useTabs = defineStore('tabs', () => {
   }
 
   async function saveWorkspace(name: string) {
+    if (workspaces.value.some((w) => w.name === name) && !(await window.gitspynx.confirm(`Workspace „${name}“ ersetzen?`, '', 'Ersetzen'))) return
     workspaces.value = (await window.gitspynx.saveWorkspace(name, [...tabs.value])).workspaces
   }
 

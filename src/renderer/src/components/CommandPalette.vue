@@ -4,10 +4,12 @@ import type { Command } from '../commands'
 import { displayCombo } from '../keymap'
 import { fuzzyRank } from '../palette'
 import { useRepo } from '../stores/repo'
+import { useTabs } from '../stores/tabs'
 import { paletteOpen } from '../ui'
 
 const props = defineProps<{ commands: Command[]; shortcuts: Map<string, string> }>()
 const repo = useRepo()
+const tabs = useTabs()
 const dialog = ref<HTMLDialogElement>()
 const input = ref<HTMLInputElement>()
 const query = ref('')
@@ -20,14 +22,15 @@ interface Entry {
   run: () => unknown
 }
 
-// Commands plus one "Checkout" entry per branch of the open repository.
+// Commands plus one "Checkout" entry per branch of the open repository and one per workspace.
 const entries = computed<Entry[]>(() => [
   ...props.commands
     .filter((c) => c.id !== 'palette.open' && (c.enabled?.() ?? true))
     .map((c) => ({ key: c.id, title: c.title, hint: props.shortcuts.get(c.id), run: c.run })),
   ...(repo.info?.refs ?? [])
     .filter((r) => (r.kind === 'local' || r.kind === 'remote') && r.name !== repo.info?.head.branch)
-    .map((r) => ({ key: r.fullName, title: `Checkout: ${r.name}`, run: () => repo.checkoutBranch(r.name) }))
+    .map((r) => ({ key: r.fullName, title: `Checkout: ${r.name}`, run: () => repo.checkoutBranch(r.name) })),
+  ...tabs.workspaces.map((w) => ({ key: `workspace:${w.name}`, title: `Workspace öffnen: ${w.name}`, run: () => tabs.openWorkspace(w) }))
 ])
 const results = computed(() => fuzzyRank(entries.value, query.value, (e) => e.title).slice(0, 50))
 watch(results, () => (cursor.value = 0))

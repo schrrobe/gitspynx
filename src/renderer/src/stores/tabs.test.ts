@@ -185,4 +185,31 @@ describe('tabs', () => {
     expect(useRepo().info).toBeNull() // /a is not a tab any more
     expect(useRepo().error).toMatch(/not a git repository/)
   })
+
+  it('restores the remembered view when a subfolder of an open tab is picked', async () => {
+    const tabs = useTabs()
+    const repo = useRepo()
+    await tabs.openPath('/a')
+    await repo.toggleSolo('refs/heads/topic')
+    await tabs.openPath('/b')
+    const w = (globalThis as unknown as { window: { gitspynx: Record<string, unknown> } }).window
+    w.gitspynx.openRepo = async (p: string) => infoFor(p.replace(/\/sub$/, ''))
+    await tabs.openPath('/a/sub')
+    expect(tabs.tabs).toEqual(['/a', '/b'])
+    expect(tabs.active).toBe(0)
+    expect(repo.solo).toBe('refs/heads/topic')
+  })
+
+  it('asks before replacing a workspace of the same name', async () => {
+    const tabs = useTabs()
+    await tabs.openPath('/a')
+    await tabs.saveWorkspace('w')
+    const w = (globalThis as unknown as { window: { gitspynx: Record<string, unknown> } }).window
+    let asked = 0
+    w.gitspynx.confirm = async () => (asked++, false)
+    await tabs.openPath('/b')
+    await tabs.saveWorkspace('w')
+    expect(asked).toBe(1)
+    expect(tabs.workspaces[0].repos).toEqual(['/a'])
+  })
 })

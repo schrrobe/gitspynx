@@ -49,4 +49,15 @@ describe('buildCommands', () => {
     expect(fake({ path: 'f.txt' }).enabled!()).toBe(false)
     expect(fake(null).enabled!()).toBe(true)
   })
+
+  it('disables pull and push in detached HEAD', () => {
+    const cmds = buildCommands({
+      repo: { info: { path: '/r', head: { branch: null, sha: 'a' } }, busy: null } as never,
+      tabs: { tabs: ['/r'], active: 0 } as never,
+      settings: { settings: { zoom: 1, pullMode: 'ff-only' } } as never,
+      pickRepo: () => {}
+    })
+    expect(cmds.find((c) => c.id === 'repo.pull')!.enabled!()).toBe(false)
+    expect(cmds.find((c) => c.id === 'repo.push')!.enabled!()).toBe(false)
+  })
 })

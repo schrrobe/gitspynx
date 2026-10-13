@@ -16,11 +16,17 @@ export const useSettings = defineStore('settings', () => {
     apply(settings.value)
   }
 
+  // Applied at once so an overlapping save builds on it; only the newest reply is taken over.
+  let seq = 0
   async function save(patch: Partial<Settings>) {
-    // plain object: IPC cannot clone reactive proxies
-    const next = JSON.parse(JSON.stringify({ ...settings.value, ...patch }))
-    settings.value = await window.gitspynx.saveSettings(next)
+    settings.value = { ...settings.value, ...patch }
     apply(settings.value)
+    const my = ++seq
+    // plain object: IPC cannot clone reactive proxies
+    const saved = await window.gitspynx.saveSettings(JSON.parse(JSON.stringify(settings.value)))
+    if (my !== seq) return
+    settings.value = saved
+    apply(saved)
   }
 
   return { settings, load, save }

@@ -39,7 +39,14 @@ const problem = computed(() => {
   if (oldestKept && (oldestKept.action === 'squash' || oldestKept.action === 'fixup'))
     return 'Der älteste übernommene Commit kann nicht mit einem vorherigen zusammengeführt werden.'
   if (rows.value.some((r) => r.action === 'reword' && !r.message.trim())) return 'Eine geänderte Nachricht darf nicht leer sein.'
+  if (rows.value.every((r) => r.action === 'drop')) return 'Alle Commits zu verwerfen ist ein Reset, kein Rebase.'
   return null
+})
+
+// With an upstream, the commits beyond "ahead" are already on the remote.
+const pushed = computed(() => {
+  const head = repo.info?.refs.find((r) => r.kind === 'local' && r.name === repo.info?.head.branch)
+  return !!head?.upstream && rows.value.length > (head.ahead ?? 0)
 })
 
 function start() {
@@ -77,7 +84,9 @@ function cancel() {
         </div>
       </li>
     </ol>
+    <p v-if="pushed" class="dim hint">Einige dieser Commits sind schon gepusht; danach ist ein Force-Push nötig.</p>
     <p v-if="problem" class="warn" role="alert">{{ problem }}</p>
+    <p v-else-if="repo.error" class="warn" role="alert">{{ repo.error }}</p>
     <footer>
       <button @click="cancel">Abbrechen</button>
       <button class="primary" :disabled="!!problem" @click="start">Rebase starten</button>
