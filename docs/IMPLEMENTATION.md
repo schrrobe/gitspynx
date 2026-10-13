@@ -23,10 +23,18 @@ Alle Meilensteine **M0–M10** der Roadmap sind umgesetzt (Branch `feat/m0-m1-sc
 
 ### Für ein Release
 
-- [ ] **1. Installer und Packaging** – kein electron-builder, keine signierte App
-- [ ] **2. Windows und Linux** – nur auf macOS getestet
-- [ ] **3. Echte Remotes** – Push/Pull per SSH und HTTPS nur gegen lokale Remotes getestet, nicht gegen GitHub/GitLab
-- [ ] **4. Eigene Passwortabfrage (askpass)** – HTTPS ohne Credential-Helper und SSH-Schlüssel mit Passphrase außerhalb des Agents scheitern mit der git-Meldung
+- [x] **1. Installer und Packaging** – electron-builder (`npm run dist`): dmg/zip (macOS), NSIS (Windows), AppImage/deb (Linux). Der Workflow „Package" baut alle drei und startet die gepackte App mit einem Smoke-Test (`tools/smoke.cjs`: Repo öffnen, Graph, Terminal).
+  - [ ] Signierung und Notarisierung – braucht ein Apple-Developer-ID-Zertifikat und ein Windows-Codesigning-Zertifikat (`CSC_LINK`, `APPLE_ID` …); bis dahin unsigniert (macOS: Rechtsklick → Öffnen)
+  - [ ] Eigenes App-Icon (derzeit das Electron-Icon)
+  - [ ] Veröffentlichung als GitHub-Release und Auto-Update (derzeit nur Workflow-Artefakte)
+- [x] **2. Windows und Linux** – Unit- und Integrationstests laufen in der CI auf Linux, macOS und Windows; die gepackte App startet auf allen drei (Smoke-Test). Dabei gefunden und behoben: git meldet Windows-Pfade als `C:/…` mit Langnamen, Node als `C:\…` teils mit 8.3-Kurznamen (Worktrees); der macOS-`spawn-helper` von node-pty kommt ohne Ausführungsrecht (Terminal kaputt in sauberen Builds).
+  - [ ] Die ausführlichen E2E-Treiber je Meilenstein liefen nur auf macOS
+- [x] **3. Echte Remotes** – gegen github.com über HTTPS aus der App geprüft: Push mit Upstream, Fetch mit ahead/behind, Pull eines fremden Commits, Remote-Branch löschen.
+  - [ ] SSH gegen GitHub – auf dem Entwicklungsrechner ist kein SSH-Schlüssel bei GitHub hinterlegt
+  - [ ] GitLab – kein Zugang vorhanden
+- [x] **4. Eigene Passwortabfrage (askpass)** – `GIT_ASKPASS`/`SSH_ASKPASS` zeigen auf ein Skript, das einen kleinen Client mit der App-Laufzeit startet; Frage und Antwort laufen über einen lokalen, per Zufallstoken gesicherten Socket (Windows: Named Pipe). Passwörter und Passphrasen werden verdeckt abgefragt. Geprüft: `git credential` auf allen drei Systemen, E2E in der App gegen einen lokalen HTTP-Server mit Basic-Auth.
+  - [ ] SSH-Passphrase und Host-Key-Abfrage nicht E2E geprüft (gleicher Weg über `SSH_ASKPASS`)
+  - [ ] In der gepackten Windows-App nicht E2E geprüft
 - [x] **5. ESLint** – `npm run lint` (JS/typescript-eslint recommended, Vue essential, keine Formatregeln), läuft in der CI
 
 ### Abweichungen vom Plan
@@ -78,7 +86,7 @@ Kurzfassung; jede Entscheidung mit Begründung und Kosten im Ledger (`.superpowe
 - Force-Push nur mit `--force-with-lease --force-if-includes`
 
 **Verhalten**
-- Credentials über den Credential-Helper bzw. SSH-Agent von git (`GIT_TERMINAL_PROMPT=0`); siehe offener Punkt 4
+- Credentials zuerst über Credential-Helper und SSH-Agent; fehlt dort etwas, fragt die App selbst (askpass). Gespeichert wird nichts, Speichern bleibt Sache des Credential-Helpers
 - Netzwerkoperationen ohne Fortschrittsanzeige, nur Busy-Zustand; Timeouts mit SIGTERM → SIGKILL
 - Stashes in der Sidebar statt als Graph-Zeilen; Stash-Button nimmt untracked Dateien mit
 - Undo/Redo ist eine App-Historie der in gitspynx ausgeführten Aktionen, jeder Schritt wird vor dem Ausführen gegen den Zustand geprüft
@@ -93,6 +101,8 @@ npm test            # Vitest: Unit + Integration gegen temporäre git-Repos
 npm run typecheck   # vue-tsc strict
 npm run lint        # ESLint
 npm run build       # electron-vite
+npm run dist        # Installer für das eigene System nach dist/
+node tools/smoke.cjs <gepackte App>   # Smoke-Test der gepackten App
 ```
 
-CI (GitHub Actions) führt Tests, Typprüfung und ESLint bei jedem Push aus. Die E2E-Treiber (Playwright `_electron`) für M1–M10 wurden während der Entwicklung lokal ausgeführt und sind noch nicht Teil des Repos.
+CI (GitHub Actions) führt Tests, Typprüfung und ESLint bei jedem Push auf Linux, macOS und Windows aus; der Workflow „Package" baut bei jedem PR die Installer aller drei Systeme und startet sie mit dem Smoke-Test. Die E2E-Treiber (Playwright `_electron`) für M1–M10 wurden während der Entwicklung lokal ausgeführt und sind noch nicht Teil des Repos.
