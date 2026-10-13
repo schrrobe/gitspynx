@@ -44,6 +44,13 @@ export interface RepoInfo {
   stashes: Commit[] // newest first; subject like "On main: message"
   worktrees: Worktree[] // first = main work tree
   submodules: Submodule[]
+  lfs: LfsInfo | null // null: the repository does not use Git LFS
+}
+
+export interface LfsInfo {
+  installed: boolean // git-lfs available
+  configured: boolean // LFS filters set up (globally or for this repository)
+  patterns: string[] // tracked patterns
 }
 
 export interface Submodule {
@@ -102,6 +109,9 @@ export interface GitspynxApi {
   removeWorktree(repo: string, path: string, force: boolean): Promise<void>
   pruneWorktrees(repo: string): Promise<void>
   updateSubmodules(repo: string, paths: string[]): Promise<void> // [] = all
+  lfsTrack(repo: string, pattern: string): Promise<void>
+  lfsUntrack(repo: string, pattern: string): Promise<void>
+  lfsPull(repo: string): Promise<void>
   terminalStart(repo: string, cols: number, rows: number): Promise<number> // login shell in the repository; returns its id
   terminalWrite(id: number, data: string): Promise<void>
   terminalResize(id: number, cols: number, rows: number): Promise<void>

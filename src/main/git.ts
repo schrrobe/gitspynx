@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { lstat, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path'
-import type { Commit, CommitDetail, ConflictVersions, DiffTarget, FileDiff, FileStatus, HunkSelection, Operation, RebaseCommit, RebaseStep, RepoInfo, Resolution, Submodule, UndoStep, Worktree } from '../shared/types'
+import type { Commit, CommitDetail, ConflictVersions, DiffTarget, FileDiff, FileStatus, HunkSelection, Operation, RebaseCommit, RebaseStep, RepoInfo, Resolution, Submodule, UndoStep, Worktree, LfsInfo } from '../shared/types'
 import { hunkKey } from '../shared/hunk'
 import { buildPatch } from './patch'
 import { LOG_FORMAT, parseDiff, parseLog, parseNameStatus, parseRefs, parseStatus, parseWorktrees, REF_FORMAT } from './parse'
@@ -102,7 +102,8 @@ export async function openRepo(dir: string): Promise<RepoInfo> {
     listWorktrees(path).catch(() => []),
     listSubmodules(path).catch(() => []) // e.g. a broken .gitmodules must not block opening
   ])
-  return { path, head, refs, tips, operation, stashes, worktrees, submodules }
+  const lfs = (await usesLfs(path)) ? await lfsInfo(path).catch(() => null) : null
+  return { path, head, refs, tips, operation, stashes, worktrees, submodules, lfs }
 }
 
 // Pages over a fixed set of tips so commits made between pages cannot shift the order.
@@ -635,4 +636,46 @@ export async function updateSubmodules(repo: string, paths: string[]): Promise<v
     ? [...stall, 'submodule', 'update', '--init', '--recursive', '--', ...paths.map((p) => `:(literal)${p}`)]
     : [...stall, 'submodule', 'update', '--recursive']
   await run(args, repo, [0], undefined, 30 * 60_000)
+}
+
+// ---- Git LFS ----
+
+// Cheap check used on every open: does the top-level .gitattributes route anything through LFS?
+async function usesLfs(repo: string): Promise<boolean> {
+  return readFile(join(repo, '.gitattributes'), 'utf8').then((t) => /filter=lfs/.test(t), () => false)
+}
+
+export async function lfsInfo(repo: string): Promise<LfsInfo> {
+  const installed = (await run(['lfs', 'version'], repo, [0, 1, 128, 129]).catch(() => ({ code: -1, stdout: '' }))).code === 0
+  if (!installed) return { installed: false, configured: false, patterns: [] }
+  const [filter, tracked] = await Promise.all([config(repo, 'filter.lfs.process'), run(['lfs', 'track'], repo)])
+  // "Listing tracked patterns" followed by lines like "    *.psd (.gitattributes)"
+  const patterns = tracked.stdout
+    .split('\n')
+    .map((line) => /^\s+(.+) \([^)]*\)$/.exec(line)?.[1])
+    .filter((p): p is string => !!p)
+  return { installed, configured: !!filter, patterns }
+}
+
+function assertLfsPattern(pattern: string) {
+  if (!pattern.trim() || pattern.startsWith('-') || /[\n\r\0]/.test(pattern) || pattern.length > 500)
+    throw new GitError(`invalid LFS pattern: ${pattern}`)
+}
+
+// Tracking the first pattern also sets LFS up for this repository if the user never ran
+// `git lfs install` (filters and hooks are written to the repository only).
+export async function lfsTrack(repo: string, pattern: string): Promise<void> {
+  assertLfsPattern(pattern)
+  if (!(await config(repo, 'filter.lfs.process'))) await run(['lfs', 'install', '--local'], repo)
+  await run(['lfs', 'track', '--', pattern], repo)
+}
+
+export async function lfsUntrack(repo: string, pattern: string): Promise<void> {
+  assertLfsPattern(pattern)
+  await run(['lfs', 'untrack', '--', pattern], repo)
+}
+
+// Downloads LFS objects for the checked-out commit and replaces pointer files with their content.
+export async function lfsPull(repo: string): Promise<void> {
+  await run(['lfs', 'pull'], repo, [0], undefined, 30 * 60_000)
 }

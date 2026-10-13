@@ -100,6 +100,11 @@ async function submoduleMenu(path: string, initialized: boolean) {
   else if (id === 'all') repo.updateSubmodules()
 }
 
+async function lfsMenu(pattern: string) {
+  const id = await window.gitspynx.showContextMenu([{ id: 'untrack', label: `„${pattern}“ nicht mehr über LFS speichern` }])
+  if (id === 'untrack') repo.lfsUntrack(pattern)
+}
+
 async function stashMenu(sha: string) {
   repo.select(sha)
   const id = await window.gitspynx.showContextMenu([
@@ -166,6 +171,18 @@ async function stashMenu(sha: string) {
         <span v-if="SUB_STATE[s.state]" class="dim">{{ SUB_STATE[s.state] }}</span>
       </button>
     </section>
+    <section v-if="repo.info?.lfs">
+      <h3>Git LFS <span class="dim">{{ repo.info.lfs.patterns.length }}</span></h3>
+      <p v-if="!repo.info.lfs.installed" class="note warn">git-lfs ist nicht installiert – LFS-Dateien bleiben Platzhalter.</p>
+      <p v-else-if="!repo.info.lfs.configured" class="note dim">LFS ist nicht eingerichtet (git lfs install).</p>
+      <button v-for="p in repo.info.lfs.patterns" :key="p" class="item" :title="`${p} – Rechtsklick für Optionen`" @contextmenu.prevent="lfsMenu(p)">
+        <span class="name mono">{{ p }}</span>
+      </button>
+      <div v-if="repo.info.lfs.installed" class="actions">
+        <button :disabled="!!repo.busy" @click="repo.lfsTrack()">Muster hinzufügen…</button>
+        <button :disabled="!!repo.busy" @click="repo.lfsPull()">{{ repo.busy === 'lfs' ? 'Lädt…' : 'Dateien holen' }}</button>
+      </div>
+    </section>
     <section v-if="repo.info?.stashes.length">
       <h3>Stashes <span class="dim">{{ repo.info.stashes.length }}</span></h3>
       <button
@@ -201,6 +218,10 @@ h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; margin:
 .item.head .name { color: var(--accent); font-weight: 600; }
 .item.hidden .name { text-decoration: line-through; opacity: 0.5; }
 .item.solo .name { color: var(--lane-1); font-weight: 600; }
+.note { margin: 2px 12px 4px 20px; font-size: 12px; }
+.note.warn { color: var(--danger); }
+.actions { display: flex; gap: 6px; padding: 4px 12px 4px 20px; }
+.actions button { padding: 1px 8px; font-size: 12px; }
 .filter { display: flex; align-items: center; justify-content: space-between; margin: 0 8px 4px; padding: 4px 8px; border-radius: 6px; background: var(--bg-hover); font-size: 12px; }
 .filter button { padding: 0 8px; font-size: 12px; }
 .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

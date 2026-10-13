@@ -5,6 +5,9 @@ import { basename, join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import {
   abortOperation,
+  lfsInfo,
+  lfsTrack,
+  lfsUntrack,
   listSubmodules,
   updateSubmodules,
   addWorktree,
@@ -1204,5 +1207,52 @@ describe('submodules', () => {
 
   it('returns no submodules for a repository without any', async () => {
     expect(await listSubmodules(join(root, 'lib'))).toEqual([])
+  })
+})
+
+const hasLfs = (() => {
+  try {
+    execFileSync('git', ['lfs', 'version'])
+    return true
+  } catch {
+    return false
+  }
+})()
+
+describe.skipIf(!hasLfs)('lfs', () => {
+  let ld: string
+  const l = (...args: string[]) => execFileSync('git', args, { cwd: ld, env }).toString().trim()
+
+  beforeAll(() => {
+    ld = realpathSync(mkdtempSync(join(tmpdir(), 'gitspynx-lfs-')))
+    l('init', '-q', '-b', 'main')
+    l('commit', '-q', '--allow-empty', '-m', 'one')
+  })
+  afterAll(() => rmSync(ld, { recursive: true, force: true }))
+
+  it('reports no LFS for a repository that does not use it', async () => {
+    expect((await openRepo(ld)).lfs).toBeNull()
+  })
+
+  it('tracks a pattern (setting LFS up for the repository) and stores matching files as pointers', async () => {
+    await lfsTrack(ld, '*.bin')
+    expect(readFileSync(join(ld, '.gitattributes'), 'utf8')).toContain('*.bin filter=lfs')
+    const info = await lfsInfo(ld)
+    expect(info).toMatchObject({ installed: true, patterns: ['*.bin'] })
+    writeFileSync(join(ld, 'big.bin'), Buffer.alloc(1024, 7))
+    l('add', '.')
+    l('commit', '-q', '-m', 'lfs file')
+    expect(l('show', 'HEAD:big.bin')).toContain('version https://git-lfs.github.com/spec/v1')
+    expect((await openRepo(ld)).lfs?.patterns).toEqual(['*.bin'])
+  })
+
+  it('untracks a pattern', async () => {
+    await lfsUntrack(ld, '*.bin')
+    expect((await lfsInfo(ld)).patterns).toEqual([])
+  })
+
+  it('rejects patterns that could be read as options or span lines', async () => {
+    await expect(lfsTrack(ld, '--no-modify-attrs')).rejects.toBeInstanceOf(GitError)
+    await expect(lfsTrack(ld, '*.a\n*.b')).rejects.toBeInstanceOf(GitError)
   })
 })

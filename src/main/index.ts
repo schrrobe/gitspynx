@@ -18,6 +18,9 @@ import {
   gitDirsOutside,
   interactiveRebase,
   isRejectedPush,
+  lfsPull,
+  lfsTrack,
+  lfsUntrack,
   listSubmodules,
   merge,
   openRepo,
@@ -309,6 +312,9 @@ const handlers: Handlers = {
   },
   removeWorktree: (_s, repo, path, force) => removeWorktree(knownRepo(repo), str(path), force === true),
   pruneWorktrees: (_s, repo) => pruneWorktrees(knownRepo(repo)),
+  lfsTrack: (_s, repo, pattern) => lfsTrack(knownRepo(repo), str(pattern)),
+  lfsUntrack: (_s, repo, pattern) => lfsUntrack(knownRepo(repo), str(pattern)),
+  lfsPull: (_s, repo) => lfsPull(knownRepo(repo)),
   terminalStart: async (sender, repo, cols, rows) => {
     if (!terminalOwners.has(sender.id)) {
       terminalOwners.add(sender.id)

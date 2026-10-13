@@ -25,7 +25,7 @@ export const useRepo = defineStore('repo', () => {
   const status = ref<FileStatus[]>([])
   const diffTarget = shallowRef<DiffTarget | null>(null) // shallow: identity is compared to drop stale diffs
   const diff = ref<FileDiff | null>(null)
-  type NetworkKind = 'fetch' | 'pull' | 'push' | 'submodules'
+  type NetworkKind = 'fetch' | 'pull' | 'push' | 'submodules' | 'lfs'
   const busyByPath = shallowRef(new Map<string, NetworkKind>()) // running network operation per repo
   const busy = computed(() => (info.value && busyByPath.value.get(info.value.path)) || null)
   const conflict = shallowRef<{ path: string; versions: ConflictVersions } | null>(null)
@@ -562,6 +562,13 @@ export const useRepo = defineStore('repo', () => {
   }
 
   const pruneWorktrees = () => mutate((r) => window.gitspynx.pruneWorktrees(r))
+
+  async function lfsTrack() {
+    const pattern = await ask('Dateien über Git LFS speichern – Muster (z. B. *.psd)', '', 'Tracken')
+    if (pattern) await mutate((r) => window.gitspynx.lfsTrack(r, pattern))
+  }
+  const lfsUntrack = (pattern: string) => mutate((r) => window.gitspynx.lfsUntrack(r, pattern))
+  const lfsPull = () => network('lfs', (r) => window.gitspynx.lfsPull(r))
   // Fetches from the submodules' remotes, so it counts as a network operation. A submodule with
   // another commit checked out is reset to the recorded one: commits made on its detached HEAD
   // would end up on no branch, so ask first.
@@ -602,6 +609,6 @@ export const useRepo = defineStore('repo', () => {
     graph, refsBySha, open, refresh, loadMore, select, refreshStatus, openDiff, closeDiff, stage, unstage, commit, close,
     checkoutBranch, createBranch, renameBranch, deleteBranch, busy, fetchAll, pullBranch, pushBranch, deleteRemoteBranch,
     conflict, mergeInto, rebaseOnto, cherryPick, continueOp, skipOp, abortOp, openConflict, resolve,
-    stash, applyStash, popLatestStash, dropStash, stageHunk, addWorktree, removeWorktree, pruneWorktrees, updateSubmodules, undo, redo, undoLabel, redoLabel, rebasePlan, openRebasePlan, startRebase, hidden, solo, toggleHidden, toggleSolo, resetFilters, loadAll
+    stash, applyStash, popLatestStash, dropStash, stageHunk, addWorktree, removeWorktree, pruneWorktrees, updateSubmodules, lfsTrack, lfsUntrack, lfsPull, undo, redo, undoLabel, redoLabel, rebasePlan, openRebasePlan, startRebase, hidden, solo, toggleHidden, toggleSolo, resetFilters, loadAll
   }
 })
