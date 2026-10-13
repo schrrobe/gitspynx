@@ -46,7 +46,9 @@ export const useRepo = defineStore('repo', () => {
   // Bumped whenever the loaded history is replaced; results of older requests are dropped.
   let generation = 0
 
-  const graph = computed(() => layoutGraph(commits.value))
+  // A loaded page only lays out its own rows (see layoutGraph).
+  let lastLayout: ReturnType<typeof layoutGraph> | undefined
+  const graph = computed(() => (lastLayout = layoutGraph(commits.value, lastLayout)))
   const refsBySha = computed(() => {
     const map = new Map<string, RepoInfo['refs']>()
     for (const r of info.value?.refs ?? []) map.set(r.target, [...(map.get(r.target) ?? []), r])

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { GraphRow } from '../graph/layout'
 
 const props = defineProps<{ row: GraphRow; width: number }>()
@@ -14,10 +15,19 @@ function path(s: GraphRow['segments'][number]) {
   const ym = (y1 + y2) / 2
   return `M${x1} ${y1}C${x1} ${ym} ${x2} ${ym} ${x2} ${y2}`
 }
+
+// All straight lanes of one color as a single path: one element per color instead of per lane.
+const straight = computed(() => {
+  const byColor = new Map<number, string>()
+  const t = props.row.through
+  for (let i = 0; i < t.length; i += 2) byColor.set(t[i + 1], `${byColor.get(t[i + 1]) ?? ''}M${x(t[i])} 0V${H}`)
+  return [...byColor]
+})
 </script>
 
 <template>
   <svg :width="props.width * LANE" :height="H" aria-hidden="true">
+    <path v-for="[color, d] in straight" :key="`s${color}`" :d="d" :stroke="`var(--lane-${color})`" stroke-width="2" fill="none" />
     <path
       v-for="(s, i) in props.row.segments"
       :key="i"
