@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import {
+import { assertNewWorktreeBranch,
   abortOperation,
   lfsInfo,
   lfsTrack,
@@ -1090,6 +1090,12 @@ describe('worktrees', () => {
 
   it('lists the main work tree', async () => {
     expect(await listWorktrees(main)).toEqual([{ path: main, head: w('rev-parse', 'HEAD'), branch: 'main', main: true, locked: false, prunable: false }])
+  })
+
+  it('checks a new worktree branch before any folder is chosen', async () => {
+    await expect(assertNewWorktreeBranch(main, 'main', 'HEAD')).rejects.toThrow(/already exists/)
+    await expect(assertNewWorktreeBranch(main, 'bad..name', 'HEAD')).rejects.toThrow(/invalid branch name/)
+    await expect(assertNewWorktreeBranch(main, 'main', null)).resolves.toBeUndefined()
   })
 
   it('adds work trees for an existing and for a new branch', async () => {

@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process'
 import { readFile, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { type DiffTarget, type GitspynxApi, type HunkSelection, type RebaseStep, type UndoStep, MAX_LOG_PAGE, type MenuItem, type RepoChange, type Resolution, type Session } from '../shared/types'
-import {
+import { assertNewWorktreeBranch,
   abortOperation,
   addWorktree,
   applyUndo,
@@ -307,6 +307,7 @@ const handlers: Handlers = {
   async addWorktree(sender, repo, branch, fromSha) {
     const path = knownRepo(repo)
     const name = str(branch)
+    await assertNewWorktreeBranch(path, name, fromSha === null ? null : str(fromSha)) // before asking for a folder
     const window = BrowserWindow.fromWebContents(sender) ?? undefined
     const res = await dialog.showSaveDialog(window!, {
       title: `Worktree für „${name}“ anlegen`,
@@ -396,20 +397,27 @@ for (const [name, fn] of Object.entries(handlers)) {
   ipcMain.handle(`api:${name}`, (e, ...args) => (fn as (s: Electron.WebContents, ...a: unknown[]) => unknown)(e.sender, ...args))
 }
 
-function createWindow() {
+// Theme and zoom are set before the first paint; the window shows once that paint is ready.
+async function createWindow() {
+  const s = await settings().load()
+  nativeTheme.themeSource = s.theme
   const win = new BrowserWindow({
     width: 1280,
     height: 800,
     minWidth: 900,
     minHeight: 600,
     title: 'gitspynx',
+    show: false,
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#16181d' : '#ffffff',
     webPreferences: {
+      zoomFactor: s.zoom,
       preload: join(__dirname, '../preload/index.js'),
       sandbox: true,
       contextIsolation: true,
       nodeIntegration: false
     }
   })
+  win.once('ready-to-show', () => win.show())
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   win.webContents.on('did-finish-load', async () => applySettings(await settings().load()))
   win.webContents.on('will-navigate', (e) => e.preventDefault())
@@ -424,9 +432,28 @@ function setMenu() {
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([
       ...(mac ? [{ role: 'appMenu' as const }] : []),
-      { role: 'editMenu' },
-      { label: 'Ansicht', submenu: [{ role: 'toggleDevTools' }, { role: 'togglefullscreen' }] },
-      { label: 'Fenster', submenu: [{ role: 'minimize' }, { role: 'zoom' }, ...(mac ? [{ type: 'separator' as const }, { role: 'front' as const }] : [{ role: 'quit' as const }])] }
+      {
+        label: 'Bearbeiten',
+        submenu: [
+          { role: 'undo', label: 'Rückgängig' },
+          { role: 'redo', label: 'Wiederholen' },
+          { type: 'separator' },
+          { role: 'cut', label: 'Ausschneiden' },
+          { role: 'copy', label: 'Kopieren' },
+          { role: 'paste', label: 'Einsetzen' },
+          { role: 'selectAll', label: 'Alles auswählen' }
+        ]
+      },
+      { label: 'Ansicht', submenu: [{ role: 'toggleDevTools', label: 'Entwicklertools' }, { role: 'togglefullscreen', label: 'Vollbild' }] },
+      {
+        label: 'Fenster',
+        submenu: [
+          { role: 'minimize', label: 'Minimieren' },
+          ...(mac
+            ? [{ role: 'zoom' as const, label: 'Zoomen' }, { type: 'separator' as const }, { role: 'front' as const, label: 'Alle nach vorne bringen' }]
+            : [{ role: 'quit' as const, label: 'Beenden' }])
+        ]
+      }
     ])
   )
 }
@@ -447,7 +474,7 @@ function adoptLoginShellPath(): Promise<void> {
 app.whenReady().then(async () => {
   setMenu()
   await adoptLoginShellPath()
-  createWindow()
-  app.on('activate', () => BrowserWindow.getAllWindows().length === 0 && createWindow())
+  await createWindow()
+  app.on('activate', () => BrowserWindow.getAllWindows().length === 0 && void createWindow())
 })
 app.on('window-all-closed', () => process.platform !== 'darwin' && app.quit())

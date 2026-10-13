@@ -52,7 +52,8 @@ export function buildCommands({ repo, tabs, settings, pickRepo }: Context): Comm
     { id: 'palette.open', title: 'Befehlspalette', keys: 'Mod+Shift+P', run: () => (paletteOpen.value = true) },
     { id: 'settings.open', title: 'Einstellungen', keys: 'Mod+,', run: () => (settingsOpen.value = true) },
     { id: 'repo.open', title: 'Repository öffnen…', keys: 'Mod+O', run: pickRepo },
-    { id: 'tab.close', title: 'Tab schließen', keys: 'Mod+W', enabled: () => tabs.tabs.length > 0, run: () => tabs.closeTab(tabs.active) },
+    // without tabs the shortcut closes the window, as everywhere else
+    { id: 'tab.close', title: 'Tab schließen', keys: 'Mod+W', run: () => (tabs.tabs.length ? tabs.closeTab(tabs.active) : window.close()) },
     { id: 'tab.next', title: 'Nächster Tab', keys: 'Ctrl+Tab', enabled: () => tabs.tabs.length > 1, run: () => tabs.activate((tabs.active + 1) % tabs.tabs.length) },
     {
       id: 'tab.prev',

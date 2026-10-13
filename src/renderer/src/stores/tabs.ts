@@ -3,6 +3,13 @@ import { ref } from 'vue'
 import type { Workspace } from '../../../shared/types'
 import { useRepo, type View } from './repo'
 
+// Folder names, with the parent folder added where two tabs would read the same.
+export function tabLabels(paths: string[]): string[] {
+  const parts = paths.map((p) => p.split(/[\\/]/).filter(Boolean))
+  const names = parts.map((p) => p.at(-1) ?? '')
+  return names.map((n, i) => (names.indexOf(n) !== names.lastIndexOf(n) ? `${n} — ${parts[i].at(-2) ?? ''}` : n))
+}
+
 // Open repositories as tabs. Only the active tab is loaded; the others keep a remembered view
 // (selection, filters) and reload when activated.
 // ponytail: inactive tabs reload from scratch on activation; cache per-tab history if switching feels slow

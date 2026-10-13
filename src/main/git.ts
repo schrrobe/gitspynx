@@ -642,9 +642,15 @@ export async function listWorktrees(repo: string): Promise<Worktree[]> {
 }
 
 // fromSha given: create the branch there; otherwise check out the existing branch.
+// fromSha set: a new branch is created, so the name must be free.
+export async function assertNewWorktreeBranch(repo: string, branch: string, fromSha: string | null): Promise<void> {
+  await assertBranchName(repo, branch)
+  if (fromSha && (await hasLocalBranch(repo, branch))) throw new GitError(`a branch named '${branch}' already exists`)
+}
+
 export async function addWorktree(repo: string, path: string, branch: string, fromSha: string | null): Promise<void> {
   if (!isAbsolute(path)) throw new GitError('work tree path must be absolute')
-  await assertBranchName(repo, branch)
+  await assertNewWorktreeBranch(repo, branch, fromSha)
   if (fromSha) assertRevision(fromSha)
   await run(fromSha ? ['worktree', 'add', '-b', branch, path, fromSha] : ['worktree', 'add', path, branch], repo)
 }

@@ -2,7 +2,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { RepoInfo, Session } from '../../../shared/types'
 import { useRepo } from './repo'
-import { useTabs } from './tabs'
+import { tabLabels, useTabs } from './tabs'
 
 let saved: { tabs: string[]; active: number }[]
 let session: Session
@@ -211,5 +211,9 @@ describe('tabs', () => {
     await tabs.saveWorkspace('w')
     expect(asked).toBe(1)
     expect(tabs.workspaces[0].repos).toEqual(['/a'])
+  })
+
+  it('labels same-named repositories with their parent folder', () => {
+    expect(tabLabels(['/w/a/app', '/w/b/app', '/w/c/tool'])).toEqual(['app — a', 'app — b', 'tool'])
   })
 })

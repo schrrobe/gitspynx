@@ -18,7 +18,7 @@ const hunks = computed(() => {
   return (repo.diff?.hunks ?? []).map((h) => {
     const lines = h.lines.slice(0, Math.max(0, left))
     left -= lines.length
-    return { header: h.header, lines }
+    return { header: h.header, lines, truncated: lines.length < h.lines.length } // staging needs every line visible
   })
 })
 
@@ -78,9 +78,9 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
     <div v-else-if="!repo.diff.hunks.length" class="note dim">Keine Änderungen.</div>
     <div v-else class="body mono">
       <template v-for="(h, i) in hunks" :key="i">
-        <div class="hunk">
+        <div v-if="h.lines.length" class="hunk">
           <span class="dim">{{ h.header }}</span>
-          <template v-if="stageable">
+          <template v-if="stageable && !h.truncated">
             <button v-if="selection?.hunk === i" :disabled="!!repo.busy" @click="stageHunk(i, true)">
               {{ staged ? 'Zeilen unstagen' : 'Zeilen stagen' }} ({{ selection.lines.size }})
             </button>

@@ -28,12 +28,17 @@ const entries = computed<Entry[]>(() => [
     .filter((c) => c.id !== 'palette.open' && (c.enabled?.() ?? true))
     .map((c) => ({ key: c.id, title: c.title, hint: props.shortcuts.get(c.id), run: c.run })),
   ...(repo.info?.refs ?? [])
-    .filter((r) => (r.kind === 'local' || r.kind === 'remote') && r.name !== repo.info?.head.branch)
+    // a remote copy of the current branch would just switch to it again
+    .filter((r) => (r.kind === 'local' || r.kind === 'remote') && (r.kind === 'local' ? r.name : r.name.split('/').slice(1).join('/')) !== repo.info?.head.branch)
     .map((r) => ({ key: r.fullName, title: `Checkout: ${r.name}`, run: () => repo.checkoutBranch(r.name) })),
   ...tabs.workspaces.map((w) => ({ key: `workspace:${w.name}`, title: `Workspace öffnen: ${w.name}`, run: () => tabs.openWorkspace(w) }))
 ])
 const results = computed(() => fuzzyRank(entries.value, query.value, (e) => e.title).slice(0, 50))
 watch(results, () => (cursor.value = 0))
+watch(cursor, async (i) => {
+  await nextTick()
+  document.getElementById(`palette-${i}`)?.scrollIntoView({ block: 'nearest' })
+})
 
 watch(paletteOpen, async (open) => {
   if (!open) return dialog.value?.close()
@@ -53,6 +58,12 @@ function run(entry: Entry | undefined) {
   entry.run()
 }
 
+function onEnter(e: KeyboardEvent) {
+  if (e.isComposing) return // IME confirming a character
+  e.preventDefault()
+  run(results.value[cursor.value])
+}
+
 function move(delta: number) {
   const n = results.value.length
   if (n) cursor.value = (cursor.value + delta + n) % n
@@ -67,11 +78,12 @@ function move(delta: number) {
       placeholder="Befehl oder Branch suchen…"
       aria-label="Befehl suchen"
       role="combobox"
+      aria-expanded="true"
       aria-controls="palette-list"
       :aria-activedescendant="results[cursor] ? `palette-${cursor}` : undefined"
       @keydown.down.prevent="move(1)"
       @keydown.up.prevent="move(-1)"
-      @keydown.enter.prevent="run(results[cursor])"
+      @keydown.enter="onEnter"
     />
     <ul id="palette-list" role="listbox">
       <li
@@ -87,8 +99,8 @@ function move(delta: number) {
         <span>{{ e.title }}</span>
         <kbd v-if="e.hint">{{ displayCombo(e.hint) }}</kbd>
       </li>
-      <li v-if="!results.length" class="empty dim">Nichts gefunden</li>
     </ul>
+    <p v-if="!results.length" class="empty dim" role="status">Nichts gefunden</p>
   </dialog>
 </template>
 
@@ -119,5 +131,5 @@ ul { list-style: none; margin: 0; padding: 4px; max-height: 50vh; overflow-y: au
 li { display: flex; justify-content: space-between; gap: 12px; padding: 6px 10px; border-radius: 6px; cursor: default; }
 li.active { background: var(--bg-selected); }
 kbd { font: 12px ui-monospace, Menlo, monospace; color: var(--text-dim); }
-.empty { justify-content: center; }
+.empty { text-align: center; margin: 0; padding: 6px 10px 10px; }
 </style>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { comboFromEvent, normalizeCombo, resolveKeymap } from './keymap'
+import { comboFromEvent, normalizeCombo, reservedCombo, resolveKeymap } from './keymap'
 
 const ev = (key: string, mods: Partial<Record<'metaKey' | 'ctrlKey' | 'shiftKey' | 'altKey', boolean>> = {}) => ({
   key,
@@ -16,6 +16,20 @@ describe('keymap', () => {
     expect(comboFromEvent(ev('p', { ctrlKey: true, shiftKey: true }), false)).toBe('Mod+Shift+P')
     expect(comboFromEvent(ev('Tab', { ctrlKey: true }), true)).toBe('Ctrl+Tab')
     expect(comboFromEvent(ev('Enter', { metaKey: true }), true)).toBe('Mod+Enter')
+  })
+
+  it('reads AltGr characters as typed text, not as Mod+Alt (Windows)', () => {
+    const altGr = { ...ev('@', { ctrlKey: true, altKey: true }), getModifierState: (k: string) => k === 'AltGraph' }
+    expect(comboFromEvent(altGr, false)).toBe('@')
+  })
+
+  it('reserves editing keys that a shortcut must not take over', () => {
+    expect(reservedCombo('Mod+C')).toBe(true)
+    expect(reservedCombo('Mod+Shift+Z')).toBe(true)
+    expect(reservedCombo('ArrowDown')).toBe(true)
+    expect(reservedCombo('Enter')).toBe(true)
+    expect(reservedCombo('Mod+Enter')).toBe(false)
+    expect(reservedCombo('Mod+Shift+P')).toBe(false)
   })
 
   it('ignores pure modifier presses', () => {

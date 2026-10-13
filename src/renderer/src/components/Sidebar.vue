@@ -7,7 +7,8 @@ import { useTabs } from '../stores/tabs'
 
 const repo = useRepo()
 const tabs = useTabs()
-const checkedOutElsewhere = (r: Ref) => repo.info?.worktrees.some((t) => !t.main && t.branch === r.name) ?? false
+// in any other worktree, including the main one when this tab is a linked worktree
+const checkedOutElsewhere = (r: Ref) => repo.info?.worktrees.some((t) => t.path !== repo.info?.path && t.branch === r.name) ?? false
 const isHead = (r: Ref) => r.kind === 'local' && r.name === repo.info?.head.branch
 
 async function menu(r: Ref) {
@@ -41,8 +42,8 @@ async function menu(r: Ref) {
   else if (id === 'rename') repo.renameBranch(r.name)
   else if (id === 'delete') repo.deleteBranch(r.name)
   else if (id === 'delete-remote') repo.deleteRemoteBranch(r.name)
-  else if (id === 'merge') repo.mergeInto(r.name)
-  else if (id === 'rebase') repo.rebaseOnto(r.name)
+  else if (id === 'merge') repo.mergeInto(r.fullName)
+  else if (id === 'rebase') repo.rebaseOnto(r.fullName)
   else if (id === 'worktree') openNewWorktree(r.name, null)
   else if (id === 'hide') repo.toggleHidden(r.fullName)
   else if (id === 'solo') repo.toggleSolo(r.fullName)
@@ -75,7 +76,7 @@ async function worktreeMenu(t: Worktree) {
     { id: 'open', label: 'Als Tab öffnen', enabled: !current && !t.prunable },
     { separator: true },
     ...(t.prunable ? [{ id: 'prune', label: 'Verwaiste Worktrees aufräumen' }] : []),
-    { id: 'remove', label: 'Entfernen…', enabled: !t.main && !current }
+    { id: 'remove', label: t.locked ? 'Entfernen… (gesperrt: git worktree unlock)' : 'Entfernen…', enabled: !t.main && !current && !t.locked }
   ])
   if (id === 'open') tabs.openPath(t.path)
   else if (id === 'prune') repo.pruneWorktrees()
@@ -153,11 +154,11 @@ async function stashMenu(sha: string) {
         @contextmenu.prevent="worktreeMenu(t)"
       >
         <span class="name">{{ t.branch ?? 'detached' }}</span>
-        <span class="dim">{{ t.main ? 'Haupt' : name(t.path) }}</span>
+        <span class="dim">{{ t.main ? 'Haupt' : name(t.path) }}{{ t.locked ? ' · gesperrt' : '' }}</span>
       </button>
     </section>
     <section v-if="repo.info?.submodules.length">
-      <h3>Submodule <span class="dim">{{ repo.info.submodules.length }}</span></h3>
+      <h3>Submodule <span class="dim">{{ repo.info.submodules.length }}{{ repo.busy === 'submodules' ? ' · wird aktualisiert…' : '' }}</span></h3>
       <button
         v-for="s in repo.info.submodules"
         :key="s.path"

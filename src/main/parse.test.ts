@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseDiff, parseLfsPatterns, parseLog, parseNameStatus, parseRefs, parseStatus } from './parse'
+import { parseDiff, parseLfsPatterns, parseLog, parseNameStatus, parseRefs, parseStatus, parseWorktrees } from './parse'
 
 const US = '\x1f'
 
@@ -143,5 +143,12 @@ describe('parseLfsPatterns', () => {
       ''
     ].join('\n')
     expect(parseLfsPatterns(text)).toEqual(['*.psd', '*.png', 'my[[:space:]]file.dat'])
+  })
+})
+
+describe('parseWorktrees', () => {
+  it('leaves out a bare main repository, which cannot be opened', () => {
+    const out = ['worktree /r.git', 'bare', '', 'worktree /wt', 'HEAD abc', 'branch refs/heads/x', 'locked', '', ''].join('\0')
+    expect(parseWorktrees(out)).toEqual([{ path: '/wt', head: 'abc', branch: 'x', main: false, locked: true, prunable: false }])
   })
 })

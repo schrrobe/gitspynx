@@ -305,6 +305,26 @@ describe('repo store', () => {
       expect(repo.selected).toBe(WIP)
     })
 
+    it('labels a merge of a full refname with the short branch name', async () => {
+      const { repo, w } = await opened()
+      let sent = ''
+      w.gitspynx.merge = async (_r: string, rev: string) => ((sent = rev), 'ok')
+      let heads = 0
+      w.gitspynx.readHead = async () => ({ sha: heads++ ? 'm1' : 'a0', branch: 'main' })
+      await repo.mergeInto('refs/heads/side')
+      expect(sent).toBe('refs/heads/side')
+      expect(repo.undoLabel).toBe('Merge „side“')
+    })
+
+    it('asks before pruning worktrees', async () => {
+      const { repo, w } = await opened()
+      let pruned = false
+      w.gitspynx.confirm = async () => false
+      w.gitspynx.pruneWorktrees = async () => void (pruned = true)
+      await repo.pruneWorktrees()
+      expect(pruned).toBe(false)
+    })
+
     it('shows the working directory when a pull stops on conflicts', async () => {
       const { repo, w } = await opened()
       w.gitspynx.pull = async () => 'conflicts'

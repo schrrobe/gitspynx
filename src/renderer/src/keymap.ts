@@ -30,6 +30,7 @@ const combo = (mods: { mod: boolean; ctrl: boolean; alt: boolean; shift: boolean
 interface KeyLike {
   key: string
   code?: string
+  getModifierState?: (key: string) => boolean
   metaKey: boolean
   ctrlKey: boolean
   shiftKey: boolean
@@ -42,8 +43,14 @@ export function comboFromEvent(e: KeyLike, mac = isMac): string | null {
   const physical = /[^\x00-\x7f]/.test(e.key) && /^(?:Key([A-Z])|Digit(\d))$/.exec(e.code ?? '')
   const key = physical ? physical[1] ?? physical[2] : keyName(e.key)
   if (!key) return null
+  // AltGr (Windows/Linux) arrives as Ctrl+Alt; the character it typed is the key.
+  if (!mac && e.getModifierState?.('AltGraph')) return combo({ mod: false, ctrl: false, alt: false, shift: e.shiftKey }, key)
   return combo({ mod: mac ? e.metaKey : e.ctrlKey, ctrl: mac && e.ctrlKey, alt: e.altKey, shift: e.shiftKey }, key)
 }
+
+// Editing and navigation keys that text fields and lists rely on.
+const RESERVED = new Set(['Mod+C', 'Mod+V', 'Mod+X', 'Mod+Z', 'Mod+Shift+Z', 'Mod+A', 'Mod+Y', 'Enter', 'Space', 'Tab', 'Escape', 'Backspace', 'Delete', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'])
+export const reservedCombo = (c: string) => RESERVED.has(c) || /^Shift\+(Arrow|Home|End|Page)/.test(c)
 
 // Parses what a user typed ("shift+cmd+p") into the canonical form, or null if invalid.
 export function normalizeCombo(text: string, mac = isMac): string | null {

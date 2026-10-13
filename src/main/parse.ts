@@ -137,7 +137,7 @@ export function parseWorktrees(out: string, sep: '\0' | '\n' = '\0'): Worktree[]
     .split(sep + sep)
     .filter((r) => r.trim())
     .map((record, i) => {
-      const t: Worktree = { path: '', head: '', branch: null, main: i === 0, locked: false, prunable: false }
+      const t: Worktree & { bare?: boolean } = { path: '', head: '', branch: null, main: i === 0, locked: false, prunable: false }
       for (const line of record.split(sep)) {
         const [key, ...rest] = line.split(' ')
         const value = rest.join(' ')
@@ -146,9 +146,12 @@ export function parseWorktrees(out: string, sep: '\0' | '\n' = '\0'): Worktree[]
         else if (key === 'branch') t.branch = value.replace(/^refs\/heads\//, '')
         else if (key === 'locked') t.locked = true
         else if (key === 'prunable') t.prunable = true
+        else if (key === 'bare') t.bare = true
       }
       return t
     })
+    .filter((t) => !t.bare) // a bare main repository has no files to open
+    .map(({ bare: _, ...t }) => t)
 }
 
 // LFS patterns of a .gitattributes file: lines whose attributes include filter=lfs (not

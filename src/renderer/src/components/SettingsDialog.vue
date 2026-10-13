@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import type { Command } from '../commands'
-import { comboFromEvent, displayCombo, normalizeCombo, resolveKeymap } from '../keymap'
+import { comboFromEvent, displayCombo, normalizeCombo, reservedCombo, resolveKeymap } from '../keymap'
 import { useSettings } from '../stores/settings'
 import { settingsOpen } from '../ui'
 
@@ -13,6 +13,7 @@ watch(settingsOpen, (open) => (open ? dialog.value?.showModal() : dialog.value?.
 
 const keymap = computed(() => resolveKeymap(props.commands, store.settings.keymap))
 const conflictIds = computed(() => new Set(keymap.value.conflicts.flatMap(([, ids]) => ids)))
+const hint = ref('')
 
 // Shortcut fields: typing a combo while focused records it; Backspace clears; Esc leaves.
 function record(e: KeyboardEvent, c: Command) {
@@ -22,11 +23,24 @@ function record(e: KeyboardEvent, c: Command) {
   if (e.key === 'Escape') return (e.target as HTMLElement).blur()
   if (e.key === 'Backspace' && !e.metaKey && !e.ctrlKey) return setKey(c, '')
   const combo = comboFromEvent(e)
-  if (combo) setKey(c, combo)
+  if (!combo) return
+  const defaults = [c.keys ?? []].flat().map((k) => normalizeCombo(k))
+  if (reservedCombo(combo) && !defaults.includes(combo)) {
+    hint.value = `${displayCombo(combo)} wird zum Bearbeiten und Navigieren gebraucht.`
+    return
+  }
+  hint.value = ''
+  void setKey(c, combo)
 }
 
-function setKey(c: Command, combo: string) {
+async function setKey(c: Command, combo: string) {
   const next = { ...store.settings.keymap }
+  const holder = combo ? keymap.value.byCombo.get(combo) : undefined
+  if (holder && holder !== c.id) {
+    const title = props.commands.find((x) => x.id === holder)?.title ?? holder
+    if (!(await window.gitspynx.confirm(`${displayCombo(combo)} ist „${title}“ zugewiesen.`, 'Dort entfernen und hier verwenden?', 'Neu zuweisen'))) return
+    next[holder] = ''
+  }
   const defaults = [c.keys ?? []].flat()
   if (defaults.length === 1 && combo === normalizeCombo(defaults[0])) delete next[c.id]
   else next[c.id] = combo
@@ -89,6 +103,7 @@ function resetKey(c: Command) {
         </tr>
       </tbody>
     </table>
+    <p v-if="hint" class="warn" role="status">{{ hint }}</p>
     <p v-if="keymap.conflicts.length" class="warn">Rot markierte Kürzel sind doppelt belegt; es gilt jeweils der erste Befehl.</p>
   </dialog>
 </template>

@@ -475,7 +475,9 @@ export const useRepo = defineStore('repo', () => {
     return true
   }
 
-  const mergeInto = (rev: string) => integrate((r) => window.gitspynx.merge(r, rev), `Merge „${rev.length === 40 ? rev.slice(0, 7) : rev}“`)
+  // Full refnames (sidebar) avoid ambiguity with a same-named tag; labels show the short name.
+  const shortRev = (rev: string) => (/^[0-9a-f]{40}$/.test(rev) ? rev.slice(0, 7) : rev.replace(/^refs\/(heads|remotes|tags)\//, ''))
+  const mergeInto = (rev: string) => integrate((r) => window.gitspynx.merge(r, rev), `Merge „${shortRev(rev)}“`)
   const cherryPick = (sha: string) => integrate((r) => window.gitspynx.cherryPick(r, sha), `Cherry-Pick ${sha.slice(0, 7)}`)
   // Recorded when HEAD stays on its branch (merge, cherry-pick, revert); a rebase runs detached.
   const continueOp = () =>
@@ -485,11 +487,11 @@ export const useRepo = defineStore('repo', () => {
   async function rebaseOnto(rev: string) {
     const branch = info.value?.head.branch
     const ok = await window.gitspynx.confirm(
-      `„${branch}“ auf „${rev}“ rebasen?`,
+      `„${branch}“ auf „${shortRev(rev)}“ rebasen?`,
       'Die Commits des Branches werden neu geschrieben. Bereits gepushte Commits brauchen danach einen Force-Push.',
       'Rebase'
     )
-    if (ok) await integrate((r) => window.gitspynx.rebase(r, rev), `Rebase auf „${rev.length === 40 ? rev.slice(0, 7) : rev}“`)
+    if (ok) await integrate((r) => window.gitspynx.rebase(r, rev), `Rebase auf „${shortRev(rev)}“`)
   }
 
   const OP_NAMES = { merge: 'Merge', rebase: 'Rebase', 'cherry-pick': 'Cherry-Pick', revert: 'Revert' }
@@ -607,7 +609,10 @@ export const useRepo = defineStore('repo', () => {
     return removed
   }
 
-  const pruneWorktrees = () => mutate((r) => window.gitspynx.pruneWorktrees(r))
+  async function pruneWorktrees() {
+    if (await window.gitspynx.confirm('Verwaiste Worktrees aufräumen?', 'Git vergisst Worktrees, deren Ordner fehlt. Die Branches bleiben erhalten.', 'Aufräumen'))
+      await mutate((r) => window.gitspynx.pruneWorktrees(r))
+  }
 
   async function lfsTrack() {
     const pattern = await ask('Dateien über Git LFS speichern – Muster (z. B. *.psd)', '', 'Tracken')
