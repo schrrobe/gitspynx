@@ -23,4 +23,11 @@ describe('parseSettings', () => {
   it('migrates unversioned settings to the current version', () => {
     expect(parseSettings({ theme: 'light' })).toMatchObject({ version: DEFAULT_SETTINGS.version, theme: 'light' })
   })
+
+  it('reads the graph column width, or leaves it automatic', () => {
+    expect(parseSettings({}).graphWidth).toBeNull()
+    expect(parseSettings({ graphWidth: 300 }).graphWidth).toBe(300)
+    expect(parseSettings({ graphWidth: 5 }).graphWidth).toBe(28) // at least two lanes
+    expect(parseSettings({ graphWidth: 'wide' }).graphWidth).toBeNull()
+  })
 })

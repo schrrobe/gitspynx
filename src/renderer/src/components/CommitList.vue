@@ -5,6 +5,8 @@ import { nextHit as nextHitIndex, searchCommits } from '../search'
 import { ask } from '../prompt'
 import { useRepo, WIP } from '../stores/repo'
 import { useTabs } from '../stores/tabs'
+import { graphColumnPx, LANE_PX } from '../graph/column'
+import { useSettings } from '../stores/settings'
 import GraphCell from './GraphCell.vue'
 
 const ROW = 28
@@ -15,6 +17,32 @@ const scroller = ref<HTMLElement>()
 const scrollTop = ref(0)
 const height = ref(800)
 const dateFmt = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+
+// Graph column: capped automatically, resizable with the handle (drag, ←/→, double-click = auto).
+const settings = useSettings()
+const dragPx = ref<number | null>(null) // live width while dragging
+const naturalPx = computed(() => repo.graph.width * LANE_PX)
+const columnPx = computed(() => graphColumnPx(repo.graph.width, dragPx.value ?? settings.settings.graphWidth))
+const clampPx = (px: number) => Math.round(Math.min(naturalPx.value, Math.max(2 * LANE_PX, px)))
+function startResize(e: PointerEvent) {
+  const el = e.currentTarget as HTMLElement
+  el.setPointerCapture(e.pointerId)
+  const [x0, w0] = [e.clientX, columnPx.value]
+  const move = (m: PointerEvent) => (dragPx.value = clampPx(w0 + m.clientX - x0))
+  const up = () => {
+    el.removeEventListener('pointermove', move)
+    if (dragPx.value !== null) void settings.save({ graphWidth: dragPx.value })
+    dragPx.value = null
+  }
+  el.addEventListener('pointermove', move)
+  el.addEventListener('pointerup', up, { once: true })
+}
+function resizeKey(e: KeyboardEvent) {
+  const step = { ArrowLeft: -LANE_PX, ArrowRight: LANE_PX }[e.key]
+  if (step === undefined) return
+  e.preventDefault()
+  void settings.save({ graphWidth: clampPx(columnPx.value + step) })
+}
 
 const visible = computed(() => {
   const start = Math.max(0, Math.floor(scrollTop.value / ROW) - OVERSCAN)
@@ -129,6 +157,23 @@ watch(focusSearchRequest, async () => {
     <span>Arbeitsverzeichnis</span>
     <span class="dim">{{ repo.status.length }} {{ repo.status.length === 1 ? 'Datei' : 'Dateien' }} geändert</span>
   </button>
+  <div class="list">
+  <div
+    v-if="repo.commits.length && naturalPx > 2 * LANE_PX"
+    class="graph-handle"
+    role="separator"
+    aria-orientation="vertical"
+    aria-label="Breite der Graph-Spalte (←/→, Doppelklick: automatisch)"
+    :aria-valuenow="columnPx"
+    :aria-valuemin="2 * LANE_PX"
+    :aria-valuemax="naturalPx"
+    tabindex="0"
+    title="Ziehen: Graph-Spalte breiter/schmaler · Doppelklick: automatisch"
+    :style="{ left: `${columnPx + 4}px` }"
+    @pointerdown.prevent="startResize"
+    @dblclick="settings.save({ graphWidth: null })"
+    @keydown="resizeKey"
+  />
   <div
     ref="scroller"
     class="scroller"
@@ -151,7 +196,7 @@ watch(focusSearchRequest, async () => {
         @click="repo.select(v.c.sha)"
         @contextmenu.prevent="menu(v.c.sha)"
       >
-        <GraphCell :row="v.row" :width="repo.graph.width" />
+        <GraphCell :row="v.row" :column-px="columnPx" />
         <span class="subject">
           <span
             v-for="r in repo.refsBySha.get(v.c.sha) ?? []"
@@ -167,6 +212,7 @@ watch(focusSearchRequest, async () => {
       </div>
     </div>
     <p v-if="!repo.commits.length && !repo.loading" class="empty dim">Noch keine Commits.</p>
+  </div>
   </div>
   </div>
 </template>
@@ -189,7 +235,10 @@ watch(focusSearchRequest, async () => {
 .count { font-variant-numeric: tabular-nums; min-width: 72px; text-align: right; }
 .row.hit .subject { font-weight: 600; }
 .row.dimmed { opacity: 0.45; }
+.list { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; }
 .scroller { flex: 1; overflow: auto; position: relative; outline: none; }
+.graph-handle { position: absolute; top: 0; bottom: 0; width: 7px; margin-left: -3px; z-index: 2; cursor: col-resize; }
+.graph-handle:hover, .graph-handle:focus-visible { background: color-mix(in srgb, var(--accent) 35%, transparent); outline: none; }
 .wip {
   display: flex;
   align-items: center;
