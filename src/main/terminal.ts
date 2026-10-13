@@ -57,9 +57,18 @@ export function shellEnv(env: Record<string, string | undefined>, appDir: string
     out[k] = v
   }
   const sep = platform === 'win32' ? ';' : ':'
-  if (out.PATH) out.PATH = out.PATH.split(sep).filter((p) => !p.startsWith(appDir)).join(sep)
+  const dirSep = platform === 'win32' ? '\\' : '/'
+  const pathKey = Object.keys(out).find((k) => k.toUpperCase() === 'PATH') // "Path" on Windows
+  if (pathKey) out[pathKey] = out[pathKey].split(sep).filter((p) => p !== appDir && !p.startsWith(appDir + dirSep)).join(sep)
   out.TERM_PROGRAM = 'gitspynx'
   out.COLORTERM = 'truecolor'
   if (platform === 'darwin' && !out.LANG) out.LANG = 'en_US.UTF-8' // Dock-launched apps get no locale
   return out
+}
+
+// PATH for a GUI-launched app: the login shell's entries first (Homebrew, git-lfs, …), then any the
+// app already had that the shell lacks.
+export function mergePath(current: string, login: string, sep: string): string {
+  const entries = [...login.split(sep), ...current.split(sep)].filter(Boolean)
+  return [...new Set(entries)].join(sep)
 }

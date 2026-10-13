@@ -173,7 +173,7 @@ async function stashMenu(sha: string) {
     </section>
     <section v-if="repo.info?.lfs">
       <h3>Git LFS <span class="dim">{{ repo.info.lfs.patterns.length }}</span></h3>
-      <p v-if="!repo.info.lfs.installed" class="note warn">git-lfs ist nicht installiert – LFS-Dateien bleiben Platzhalter.</p>
+      <p v-if="!repo.info.lfs.installed" class="note warn">git-lfs wurde nicht gefunden – LFS-Dateien bleiben Platzhalter. Git LFS installieren und gitspynx neu starten.</p>
       <p v-else-if="!repo.info.lfs.configured" class="note dim">LFS ist nicht eingerichtet (git lfs install).</p>
       <button v-for="p in repo.info.lfs.patterns" :key="p" class="item" :title="`${p} – Rechtsklick für Optionen`" @contextmenu.prevent="lfsMenu(p)">
         <span class="name mono">{{ p }}</span>

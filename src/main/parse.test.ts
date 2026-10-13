@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseDiff, parseLog, parseNameStatus, parseRefs, parseStatus } from './parse'
+import { parseDiff, parseLfsPatterns, parseLog, parseNameStatus, parseRefs, parseStatus } from './parse'
 
 const US = '\x1f'
 
@@ -126,5 +126,22 @@ describe('parseDiff', () => {
   it('flags binary files', () => {
     const out = 'diff --git a/x.png b/x.png\nindex 1..2 100644\nBinary files a/x.png and b/x.png differ\n'
     expect(parseDiff(out)).toEqual({ binary: true, header: ['diff --git a/x.png b/x.png', 'index 1..2 100644'], hunks: [] })
+  })
+})
+
+describe('parseLfsPatterns', () => {
+  it('reads LFS patterns from .gitattributes, ignoring comments, excludes and other attributes', () => {
+    const text = [
+      '# assets',
+      '*.psd filter=lfs diff=lfs merge=lfs -text',
+      '*.png filter=lfs diff=lfs merge=lfs -text lockable',
+      'docs/*.bin -filter=lfs',
+      'x.bin !filter',
+      '# *.zip filter=lfs',
+      'my[[:space:]]file.dat filter=lfs diff=lfs merge=lfs -text',
+      '*.txt text eol=lf',
+      ''
+    ].join('\n')
+    expect(parseLfsPatterns(text)).toEqual(['*.psd', '*.png', 'my[[:space:]]file.dat'])
   })
 })

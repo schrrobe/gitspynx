@@ -1,4 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme } from 'electron'
+import { execFile } from 'node:child_process'
 import { readFile, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { type DiffTarget, type GitspynxApi, type HunkSelection, type RebaseStep, type UndoStep, MAX_LOG_PAGE, type MenuItem, type RepoChange, type Resolution, type Session } from '../shared/types'
@@ -49,7 +50,7 @@ import {
 } from './git'
 import { parseSettings, type Settings } from '../shared/settings'
 import { jsonFile, latestOnly, sessionFile, withoutWorkspace, withTabs, withWorkspace } from './session'
-import { createTerminals, shellEnv } from './terminal'
+import { createTerminals, mergePath, shellEnv } from './terminal'
 import { type RepoWatcher, watchRepo } from './watch'
 
 const recentFile = () => join(app.getPath('userData'), 'recent.json')
@@ -422,8 +423,22 @@ function setMenu() {
   )
 }
 
-app.whenReady().then(() => {
+// Apps started from the Dock/launcher get a minimal PATH (no Homebrew, so no git-lfs, gpg, …).
+// Take the login shell's PATH once, so git and its helpers find what the user's terminal finds.
+function adoptLoginShellPath(): Promise<void> {
+  if (process.platform === 'win32') return Promise.resolve()
+  return new Promise((resolve) => {
+    execFile(shell, ['-lc', 'printf "__GITSPYNX_PATH__%s" "$PATH"'], { timeout: 3000 }, (err, stdout) => {
+      const login = !err && stdout.split('__GITSPYNX_PATH__').pop()
+      if (login) process.env.PATH = mergePath(process.env.PATH ?? '', login.trim(), ':')
+      resolve()
+    })
+  })
+}
+
+app.whenReady().then(async () => {
   setMenu()
+  await adoptLoginShellPath()
   createWindow()
   app.on('activate', () => BrowserWindow.getAllWindows().length === 0 && createWindow())
 })

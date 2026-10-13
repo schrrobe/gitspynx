@@ -5,7 +5,7 @@ import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import type { Commit, CommitDetail, ConflictVersions, DiffTarget, FileDiff, FileStatus, HunkSelection, Operation, RebaseCommit, RebaseStep, RepoInfo, Resolution, Submodule, UndoStep, Worktree, LfsInfo } from '../shared/types'
 import { hunkKey } from '../shared/hunk'
 import { buildPatch } from './patch'
-import { LOG_FORMAT, parseDiff, parseLog, parseNameStatus, parseRefs, parseStatus, parseWorktrees, REF_FORMAT } from './parse'
+import { LOG_FORMAT, parseDiff, parseLfsPatterns, parseLog, parseNameStatus, parseRefs, parseStatus, parseWorktrees, REF_FORMAT } from './parse'
 
 export class GitError extends Error {
   constructor(message: string, readonly code: number | null = null, readonly stderr = '') {
@@ -62,7 +62,10 @@ export function run(args: string[], cwd: string, okCodes = [0], stdin?: string, 
       if (failure) return reject(new GitError(failure.message, code, stderr))
       const exit = code ?? -1
       if (okCodes.includes(exit)) return resolve({ code: exit, stdout: Buffer.concat(out).toString() })
-      reject(new GitError(stderr.trim() || `git ${args[0]} failed (${exit})`, exit, stderr))
+      const message = /git-lfs[^\n]*(command )?not found|'lfs' is not a git command/.test(stderr)
+        ? 'git-lfs was not found on the app\'s PATH — install Git LFS or make it available to GUI apps'
+        : stderr.trim() || `git ${args[0]} failed (${exit})`
+      reject(new GitError(message, exit, stderr))
     })
     child.stdin.on('error', () => {}) // EPIPE when git exits without reading stdin; exit code tells the story
     child.stdin.end(stdin)
@@ -102,7 +105,7 @@ export async function openRepo(dir: string): Promise<RepoInfo> {
     listWorktrees(path).catch(() => []),
     listSubmodules(path).catch(() => []) // e.g. a broken .gitmodules must not block opening
   ])
-  const lfs = (await usesLfs(path)) ? await lfsInfo(path).catch(() => null) : null
+  const lfs = (await lfsPatterns(path)).length ? await lfsInfo(path).catch(() => null) : null
   return { path, head, refs, tips, operation, stashes, worktrees, submodules, lfs }
 }
 
@@ -640,33 +643,36 @@ export async function updateSubmodules(repo: string, paths: string[]): Promise<v
 
 // ---- Git LFS ----
 
-// Cheap check used on every open: does the top-level .gitattributes route anything through LFS?
-async function usesLfs(repo: string): Promise<boolean> {
-  return readFile(join(repo, '.gitattributes'), 'utf8').then((t) => /filter=lfs/.test(t), () => false)
+// Read from the top-level .gitattributes directly: listing via `git lfs track` would install
+// missing LFS hooks as a side effect (even into a tracked core.hooksPath folder).
+async function lfsPatterns(repo: string): Promise<string[]> {
+  return readFile(join(repo, '.gitattributes'), 'utf8').then(parseLfsPatterns, () => [])
 }
 
 export async function lfsInfo(repo: string): Promise<LfsInfo> {
-  const installed = (await run(['lfs', 'version'], repo, [0, 1, 128, 129]).catch(() => ({ code: -1, stdout: '' }))).code === 0
-  if (!installed) return { installed: false, configured: false, patterns: [] }
-  const [filter, tracked] = await Promise.all([config(repo, 'filter.lfs.process'), run(['lfs', 'track'], repo)])
-  // "Listing tracked patterns" followed by lines like "    *.psd (.gitattributes)"
-  const patterns = tracked.stdout
-    .split('\n')
-    .map((line) => /^\s+(.+) \([^)]*\)$/.exec(line)?.[1])
-    .filter((p): p is string => !!p)
-  return { installed, configured: !!filter, patterns }
+  const [version, patterns, filter] = await Promise.all([
+    run(['lfs', 'version'], repo, [0, 1, 128, 129]).catch(() => ({ code: -1, stdout: '' })),
+    lfsPatterns(repo),
+    config(repo, 'filter.lfs.process')
+  ])
+  return { installed: version.code === 0, configured: !!filter, patterns }
 }
 
+// Sets the LFS filters up for this repository if neither the user (git lfs install) nor an
+// earlier call did. --skip-repo: existing hooks (husky, own pre-push) are left alone.
+async function ensureLfsConfigured(repo: string): Promise<void> {
+  if (!(await config(repo, 'filter.lfs.process'))) await run(['lfs', 'install', '--local', '--skip-repo'], repo)
+}
+
+// "!" would write a negative attribute pattern, which git ignores: tracking would silently do nothing.
 function assertLfsPattern(pattern: string) {
-  if (!pattern.trim() || pattern.startsWith('-') || /[\n\r\0]/.test(pattern) || pattern.length > 500)
+  if (!pattern.trim() || /^[-!]/.test(pattern) || /[\n\r\0]/.test(pattern) || pattern.length > 500)
     throw new GitError(`invalid LFS pattern: ${pattern}`)
 }
 
-// Tracking the first pattern also sets LFS up for this repository if the user never ran
-// `git lfs install` (filters and hooks are written to the repository only).
 export async function lfsTrack(repo: string, pattern: string): Promise<void> {
   assertLfsPattern(pattern)
-  if (!(await config(repo, 'filter.lfs.process'))) await run(['lfs', 'install', '--local'], repo)
+  await ensureLfsConfigured(repo)
   await run(['lfs', 'track', '--', pattern], repo)
 }
 
@@ -676,6 +682,8 @@ export async function lfsUntrack(repo: string, pattern: string): Promise<void> {
 }
 
 // Downloads LFS objects for the checked-out commit and replaces pointer files with their content.
+// (Without configured filters `git lfs pull` skips the checkout and still exits 0.)
 export async function lfsPull(repo: string): Promise<void> {
+  await ensureLfsConfigured(repo)
   await run(['lfs', 'pull'], repo, [0], undefined, 30 * 60_000)
 }

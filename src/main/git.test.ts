@@ -1251,8 +1251,29 @@ describe.skipIf(!hasLfs)('lfs', () => {
     expect((await lfsInfo(ld)).patterns).toEqual([])
   })
 
-  it('rejects patterns that could be read as options or span lines', async () => {
+  it('rejects patterns that could be read as options, span lines or are negated', async () => {
     await expect(lfsTrack(ld, '--no-modify-attrs')).rejects.toBeInstanceOf(GitError)
     await expect(lfsTrack(ld, '*.a\n*.b')).rejects.toBeInstanceOf(GitError)
+    await expect(lfsTrack(ld, '!*.bin')).rejects.toBeInstanceOf(GitError) // git ignores negative attribute patterns
+  })
+
+  it('does not write hooks when a repository using LFS is opened', async () => {
+    const fresh = realpathSync(mkdtempSync(join(tmpdir(), 'gitspynx-lfs-open-')))
+    execFileSync('git', ['init', '-q'], { cwd: fresh, env })
+    writeFileSync(join(fresh, '.gitattributes'), '*.bin filter=lfs diff=lfs merge=lfs -text\n')
+    const info = await openRepo(fresh)
+    expect(info.lfs?.patterns).toEqual(['*.bin'])
+    expect(existsSync(join(fresh, '.git', 'hooks', 'pre-push'))).toBe(false)
+    rmSync(fresh, { recursive: true })
+  })
+
+  it('tracks the first pattern in a repository that already has its own pre-push hook', async () => {
+    const hooked = realpathSync(mkdtempSync(join(tmpdir(), 'gitspynx-lfs-hook-')))
+    execFileSync('git', ['init', '-q'], { cwd: hooked, env })
+    writeFileSync(join(hooked, '.git', 'hooks', 'pre-push'), '#!/bin/sh\necho mine\n', { mode: 0o755 })
+    await lfsTrack(hooked, '*.psd')
+    expect(readFileSync(join(hooked, '.gitattributes'), 'utf8')).toContain('*.psd filter=lfs')
+    expect(readFileSync(join(hooked, '.git', 'hooks', 'pre-push'), 'utf8')).toContain('echo mine') // left alone
+    rmSync(hooked, { recursive: true })
   })
 })

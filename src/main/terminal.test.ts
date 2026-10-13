@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createTerminals, type PtyLike, shellEnv } from './terminal'
+import { createTerminals, mergePath, type PtyLike, shellEnv } from './terminal'
 
 function fakePty() {
   const p = {
@@ -112,5 +112,19 @@ describe('shellEnv', () => {
     expect(env.COLORTERM).toBe('truecolor')
     expect(env.LANG).toBe('en_US.UTF-8')
     expect(shellEnv({ PATH: '/usr/bin', LANG: 'de_DE.UTF-8' }, '/app', 'darwin').LANG).toBe('de_DE.UTF-8')
+  })
+})
+
+describe('mergePath', () => {
+  it('puts the login shell PATH first and keeps entries only the app had', () => {
+    expect(mergePath('/usr/bin:/bin:/opt/app/bin', '/opt/homebrew/bin:/usr/bin:/bin', ':')).toBe('/opt/homebrew/bin:/usr/bin:/bin:/opt/app/bin')
+    expect(mergePath('/usr/bin', '', ':')).toBe('/usr/bin')
+  })
+})
+
+describe('shellEnv on Windows and with similar folder names', () => {
+  it('filters the PATH key regardless of its case and only drops entries inside the app folder', () => {
+    const env = shellEnv({ Path: 'C:\\\\app\\\\node_modules\\\\.bin;C:\\\\app-tools;C:\\\\Windows' }, 'C:\\\\app', 'win32')
+    expect(env.Path).toBe('C:\\\\app-tools;C:\\\\Windows')
   })
 })

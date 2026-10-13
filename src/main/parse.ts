@@ -147,3 +147,15 @@ export function parseWorktrees(out: string, sep: '\0' | '\n' = '\0'): Worktree[]
       return t
     })
 }
+
+// LFS patterns of a .gitattributes file: lines whose attributes include filter=lfs (not
+// -filter=lfs / !filter, not comments). Attributes like "lockable" are not part of the pattern.
+export function parseLfsPatterns(text: string): string[] {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('#'))
+    .map((line) => line.split(/\s+/))
+    .filter(([, ...attrs]) => attrs.includes('filter=lfs'))
+    .map(([pattern]) => pattern)
+}
