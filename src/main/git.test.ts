@@ -614,6 +614,20 @@ describe('merge, rebase, cherry-pick and conflicts', () => {
     await abortOperation(md)
   })
 
+  it('reports a stopped git am as its own operation and aborts it', async () => {
+    m('switch', '-q', 'side')
+    const patch = execFileSync('git', ['format-patch', '-1', '--stdout'], { cwd: md, env }).toString()
+    m('switch', '-q', 'main')
+    try {
+      execFileSync('git', ['am', '-q'], { cwd: md, env, input: patch, stdio: ['pipe', 'ignore', 'ignore'] })
+    } catch {
+      // stops: the patch does not apply on main
+    }
+    expect(await currentOperation(md)).toBe('am')
+    await abortOperation(md)
+    expect(await currentOperation(md)).toBeNull()
+  })
+
   it('continues even when GIT_EDITOR points to a failing editor', async () => {
     const saved = process.env.GIT_EDITOR
     process.env.GIT_EDITOR = 'false'

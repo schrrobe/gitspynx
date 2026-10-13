@@ -330,6 +330,9 @@ const handlers: Handlers = {
       terminalOwners.add(sender.id)
       const id = sender.id
       sender.once('destroyed', () => (terminals.killAll(id), terminalOwners.delete(id)))
+      // a reloaded or crashed renderer cannot reach its shells any more
+      sender.on('render-process-gone', () => terminals.killAll(id))
+      sender.on('did-start-navigation', (d) => d.isMainFrame && !d.isSameDocument && terminals.killAll(id))
     }
     return terminals.start(sender.id, knownRepo(repo), int(cols, 100_000), int(rows, 100_000))
   },

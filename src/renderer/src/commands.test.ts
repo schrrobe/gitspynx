@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildCommands, commandForKey, type Command } from './commands'
+import { buildCommands, commandForKey, passesTerminal, type Command } from './commands'
 
 const cmd = (id: string, extra: Partial<Command> = {}): Command => ({ id, title: id, run: () => {}, ...extra })
 const byCombo = new Map([
@@ -59,5 +59,15 @@ describe('buildCommands', () => {
     })
     expect(cmds.find((c) => c.id === 'repo.pull')!.enabled!()).toBe(false)
     expect(cmds.find((c) => c.id === 'repo.push')!.enabled!()).toBe(false)
+  })
+})
+
+describe('passesTerminal', () => {
+  it('lets tab switching, palette and terminal toggle through, keeps shell keys elsewhere', () => {
+    expect(passesTerminal(cmd('tab.next'), 'Ctrl+Tab', false)).toBe(true)
+    expect(passesTerminal(cmd('terminal.toggle'), 'Ctrl+`', false)).toBe(true)
+    expect(passesTerminal(cmd('tab.close'), 'Mod+W', false)).toBe(false) // Ctrl+W deletes a word in the shell
+    expect(passesTerminal(cmd('tab.close'), 'Mod+W', true)).toBe(true) // Cmd never reaches a shell
+    expect(passesTerminal(undefined, 'Mod+K', true)).toBe(false)
   })
 })

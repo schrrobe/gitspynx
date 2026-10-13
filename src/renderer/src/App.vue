@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { buildCommands, commandForKey } from './commands'
+import { buildCommands, commandForKey, passesTerminal } from './commands'
 import CommandPalette from './components/CommandPalette.vue'
 import CommitDetail from './components/CommitDetail.vue'
 import SettingsDialog from './components/SettingsDialog.vue'
@@ -46,6 +46,12 @@ function onKey(e: KeyboardEvent) {
   e.preventDefault()
   command.run()
 }
+// Keys the terminal hands back to the app (they then bubble to onKey).
+function passKey(e: KeyboardEvent) {
+  const combo = comboFromEvent(e)
+  return !!combo && passesTerminal(commandForKey(combo, { repeat: e.repeat, inTextField: true }, commands, keymap.value.byCombo), combo)
+}
+
 onMounted(() => window.addEventListener('keydown', onKey))
 onUnmounted(() => window.removeEventListener('keydown', onKey))
 
@@ -158,7 +164,7 @@ async function deleteWorkspace(name: string) {
     <WorkdirPanel v-if="repo.selected === WIP" :key="repo.info.path" class="detail" />
     <CommitDetail v-else class="detail" />
     <!-- v-show: hiding the panel keeps the shells running -->
-    <TerminalPanel v-show="terminalOpen" :visible="terminalOpen" />
+    <TerminalPanel v-show="terminalOpen" :visible="terminalOpen" :pass-key="passKey" />
   </div>
   <PromptDialog />
   <RebaseDialog />

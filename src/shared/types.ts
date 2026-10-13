@@ -70,7 +70,7 @@ export interface Worktree {
   prunable: boolean // its folder is gone
 }
 
-export type Operation = 'merge' | 'rebase' | 'cherry-pick' | 'revert'
+export type Operation = 'merge' | 'rebase' | 'cherry-pick' | 'revert' | 'am'
 
 export interface ConflictVersions {
   base: string | null // null: the file did not exist in that version

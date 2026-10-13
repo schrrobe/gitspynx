@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import { useRepo } from '../stores/repo'
 
 const repo = useRepo()
-const NAMES = { merge: 'Merge', rebase: 'Rebase', 'cherry-pick': 'Cherry-Pick', revert: 'Revert' }
+const NAMES = { merge: 'Merge', rebase: 'Rebase', 'cherry-pick': 'Cherry-Pick', revert: 'Revert', am: 'Patch (git am)' }
 const conflicts = computed(() => repo.status.filter((f) => f.conflicted).length)
 </script>
 

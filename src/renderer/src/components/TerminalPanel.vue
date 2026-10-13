@@ -3,12 +3,13 @@ import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import { nextTick, onUnmounted, ref, watch } from 'vue'
+import { splitForIpc } from '../paste'
 import { useRepo } from '../stores/repo'
 import { useTabs } from '../stores/tabs'
 
 // One shell per repository, kept while its tab is open — also while the panel is hidden. Shells
 // start on first show; only the active repository's terminal is displayed.
-const props = defineProps<{ visible: boolean }>()
+const props = defineProps<{ visible: boolean; passKey: (e: KeyboardEvent) => boolean }>()
 const repo = useRepo()
 const tabs = useTabs()
 const host = ref<HTMLElement>()
@@ -45,12 +46,16 @@ async function show() {
     const term = new Terminal({ fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 12, cursorBlink: true })
     const fit = new FitAddon()
     term.loadAddon(fit)
+    term.attachCustomKeyEventHandler((e) => !(e.type === 'keydown' && props.passKey(e))) // false: xterm ignores it, the app gets it
     term.open(el)
     fit.fit()
     s = { id: null, term, fit, el }
     sessions.set(path, s)
     const session = s
-    term.onData((d) => session.id !== null && window.gitspynx.terminalWrite(session.id, d).catch(() => {}))
+    term.onData((d) => {
+      if (session.id === null) return
+      for (const part of splitForIpc(d)) window.gitspynx.terminalWrite(session.id, part).catch(() => {}) // large pastes in pieces
+    })
     // the single place that tells the shell its size (window resize, zoom, tab switch)
     term.onResize(({ cols, rows }) => session.id !== null && window.gitspynx.terminalResize(session.id, cols, rows))
     await start(path, s)

@@ -32,6 +32,10 @@ describe('keymap', () => {
     expect(reservedCombo('Mod+Shift+P')).toBe(false)
   })
 
+  it('falls back to the physical key when the key is a dead key', () => {
+    expect(comboFromEvent({ ...ev('Dead', { ctrlKey: true }), code: 'Backquote' }, true)).toBe('Ctrl+`')
+  })
+
   it('ignores pure modifier presses', () => {
     expect(comboFromEvent(ev('Shift', { shiftKey: true }), true)).toBeNull()
   })

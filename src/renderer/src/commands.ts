@@ -2,6 +2,7 @@ import type { useRepo } from './stores/repo'
 import type { useSettings } from './stores/settings'
 import type { useTabs } from './stores/tabs'
 import { WIP } from './stores/repo'
+import { isMac } from './keymap'
 import { focusSearchRequest, paletteOpen, settingsOpen, terminalOpen } from './ui'
 
 export interface Command {
@@ -16,6 +17,12 @@ export interface Command {
 
 // The command a key press triggers, if any: plain keys (no Mod/Ctrl) stay with text fields, key
 // repeat only drives repeatable commands (holding Mod+W must not close every tab).
+// The terminal keeps keys for the shell; these app shortcuts reach the app from there. On macOS
+// Cmd combos never mean anything to a shell; elsewhere Ctrl+W, Ctrl+R … do.
+const THROUGH_TERMINAL = new Set(['tab.next', 'tab.prev', 'terminal.toggle', 'palette.open'])
+export const passesTerminal = (command: Command | undefined, combo: string, mac = isMac) =>
+  !!command && (THROUGH_TERMINAL.has(command.id) || (mac && combo.includes('Mod')))
+
 export function commandForKey(
   combo: string,
   e: { repeat: boolean; inTextField: boolean },

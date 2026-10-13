@@ -40,8 +40,9 @@ interface KeyLike {
 export function comboFromEvent(e: KeyLike, mac = isMac): string | null {
   if (MODIFIER_KEYS.has(e.key)) return null
   // Non-Latin layouts (e.g. Cyrillic) report their own letters; use the physical key instead.
-  const physical = /[^\x00-\x7f]/.test(e.key) && /^(?:Key([A-Z])|Digit(\d))$/.exec(e.code ?? '')
-  const key = physical ? physical[1] ?? physical[2] : keyName(e.key)
+  // Dead keys (` on many European layouts) report "Dead"; the physical key still identifies them.
+  const physical = (e.key === 'Dead' || /[^\x00-\x7f]/.test(e.key)) && /^(?:Key([A-Z])|Digit(\d)|(Backquote))$/.exec(e.code ?? '')
+  const key = physical ? (physical[1] ?? physical[2] ?? '`') : keyName(e.key)
   if (!key) return null
   // AltGr (Windows/Linux) arrives as Ctrl+Alt; the character it typed is the key.
   if (!mac && e.getModifierState?.('AltGraph')) return combo({ mod: false, ctrl: false, alt: false, shift: e.shiftKey }, key)

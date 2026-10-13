@@ -303,6 +303,7 @@ export async function gitDirsOutside(path: string): Promise<string[]> {
 
 const OPERATION_MARKERS: [string, Operation][] = [
   ['rebase-merge', 'rebase'],
+  ['rebase-apply/applying', 'am'], // git am shares rebase-apply with the old rebase backend
   ['rebase-apply', 'rebase'],
   ['MERGE_HEAD', 'merge'],
   ['CHERRY_PICK_HEAD', 'cherry-pick'],
@@ -363,8 +364,8 @@ export async function continueOperation(repo: string): Promise<'ok' | 'conflicts
   // only if index and work tree both equal HEAD — `rebase --skip` resets the work tree.
   const cleanAtHead = (await run(['diff', '--quiet', 'HEAD'], repo, [0, 1])).code === 0
   // Only a stopped pick can be skipped; a failed exec step (rescheduled) must run again instead.
-  const stoppedOn = { rebase: 'REBASE_HEAD', 'cherry-pick': 'CHERRY_PICK_HEAD', revert: 'REVERT_HEAD' }[op]
-  const stoppedPick = (await run(['rev-parse', '-q', '--verify', stoppedOn], repo, [0, 1])).code === 0
+  const stoppedOn = { rebase: 'REBASE_HEAD', 'cherry-pick': 'CHERRY_PICK_HEAD', revert: 'REVERT_HEAD', am: null }[op]
+  const stoppedPick = !!stoppedOn && (await run(['rev-parse', '-q', '--verify', stoppedOn], repo, [0, 1])).code === 0
   if (cleanAtHead && stoppedPick && !(await hasUnmerged(repo))) return mayConflict(repo, [op, '--skip'])
   return mayConflict(repo, [op, '--continue'])
 }
@@ -377,7 +378,7 @@ export async function abortOperation(repo: string): Promise<void> {
 
 export async function skipOperation(repo: string): Promise<'ok' | 'conflicts'> {
   const op = await currentOperation(repo)
-  if (op !== 'rebase' && op !== 'cherry-pick' && op !== 'revert') throw new GitError('nothing to skip')
+  if (op !== 'rebase' && op !== 'cherry-pick' && op !== 'revert' && op !== 'am') throw new GitError('nothing to skip')
   return mayConflict(repo, [op, '--skip'])
 }
 

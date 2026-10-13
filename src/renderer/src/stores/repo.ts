@@ -494,7 +494,7 @@ export const useRepo = defineStore('repo', () => {
     if (ok) await integrate((r) => window.gitspynx.rebase(r, rev), `Rebase auf „${shortRev(rev)}“`)
   }
 
-  const OP_NAMES = { merge: 'Merge', rebase: 'Rebase', 'cherry-pick': 'Cherry-Pick', revert: 'Revert' }
+  const OP_NAMES = { merge: 'Merge', rebase: 'Rebase', 'cherry-pick': 'Cherry-Pick', revert: 'Revert', am: 'Patch (git am)' }
 
   async function abortOp() {
     const op = info.value?.operation
