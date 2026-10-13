@@ -95,6 +95,47 @@ describe('repo store', () => {
     expect(repo.diff).toEqual({ binary: false, hunks: [] })
   })
 
+  it('re-reads an open diff after a history reload (external commit, reset, checkout)', async () => {
+    const repo = useRepo()
+    const first = repo.open('/r')
+    await flush()
+    logCalls[0].d.resolve(page('c', 3))
+    await first
+    const w = (globalThis as unknown as { window: { gitspynx: Record<string, unknown> } }).window
+    w.gitspynx.readStatus = async () => [{ path: 'f1', staged: 'M', unstaged: null, conflicted: false }]
+    w.gitspynx.readFileDiff = async () => ({ binary: false, hunks: ['before'] })
+    await repo.openDiff({ path: 'f1', staged: true })
+    w.gitspynx.readLog = async () => page('c', 3)
+    w.gitspynx.readStatus = async () => [{ path: 'f1', staged: null, unstaged: 'M', conflicted: false }] // e.g. git reset
+    w.gitspynx.readFileDiff = async () => ({ binary: false, hunks: ['after'] })
+    await repo.refresh(true)
+    expect(repo.diffTarget).toEqual({ path: 'f1', staged: false })
+    expect(repo.diff).toEqual({ binary: false, hunks: ['after'] })
+  })
+
+  it('shows the newest diff when an older read of the same file finishes last', async () => {
+    const repo = useRepo()
+    const first = repo.open('/r')
+    await flush()
+    logCalls[0].d.resolve(page('c', 3))
+    await first
+    const reads: ReturnType<typeof deferred<unknown>>[] = []
+    const w = (globalThis as unknown as { window: { gitspynx: Record<string, unknown> } }).window
+    w.gitspynx.readFileDiff = () => {
+      const d = deferred<unknown>()
+      reads.push(d)
+      return d.promise
+    }
+    const target = { path: 'f1', staged: false }
+    const older = repo.openDiff(target)
+    const newer = repo.openDiff(target) // e.g. a watcher refresh after an external git reset
+    reads[1].resolve({ binary: false, hunks: ['new'] })
+    await newer
+    reads[0].resolve({ binary: false, hunks: ['old'] })
+    await older
+    expect(repo.diff).toEqual({ binary: false, hunks: ['new'] })
+  })
+
   it('follows an open diff to the staged side when the file gets staged', async () => {
     const repo = useRepo()
     const first = repo.open('/r')

@@ -142,7 +142,7 @@ export const useRepo = defineStore('repo', () => {
           diff.value = null
           conflict.value = null
           if (v?.selected) void select(v.selected)
-        }
+        } else await refreshOpenDiff() // external commit/reset/checkout changed what the diff shows
       } finally {
         if (gen === generation) loading.value = false
       }
@@ -204,22 +204,31 @@ export const useRepo = defineStore('repo', () => {
       const files = await window.gitspynx.readStatus(path)
       if (info.value?.path !== path) return // repo closed or switched meanwhile
       status.value = files
-      const t = diffTarget.value
-      if (!t || 'sha' in t) return
-      // A file that moved between staged/unstaged keeps its diff open on the side it is now on.
-      const f = status.value.find((s) => s.path === t.path)
-      const stillThere = f && (t.staged ? f.staged : f.unstaged)
-      const other = f && (t.staged ? f.unstaged : f.staged)
-      await openDiff(!stillThere && other ? { path: t.path, staged: !t.staged } : t, true)
+      await refreshOpenDiff()
     }, true) // a follow-up reload: the triggering action already reset the messages
 
+  // After the status changed: re-read an open working-directory diff; a file that moved between
+  // staged and unstaged keeps its diff open on the side it is now on.
+  function refreshOpenDiff() {
+    const t = diffTarget.value
+    if (!t || 'sha' in t) return
+    const f = status.value.find((s) => s.path === t.path)
+    const stillThere = f && (t.staged ? f.staged : f.unstaged)
+    const other = f && (t.staged ? f.unstaged : f.staged)
+    return openDiff(!stillThere && other ? { path: t.path, staged: !t.staged } : t, true)
+  }
+
+  // Only the newest read counts: a refresh re-reads the same target, and an older answer must not
+  // overwrite a newer one (e.g. a read from before an external `git reset` finishing last).
+  let diffRead = 0
   const openDiff = (target: DiffTarget, background = false) =>
     guard(async () => {
       if (!info.value) return
       conflict.value = null
       diffTarget.value = target
+      const my = ++diffRead
       const d = await window.gitspynx.readFileDiff(info.value.path, target)
-      if (diffTarget.value === target) diff.value = d
+      if (my === diffRead && diffTarget.value === target) diff.value = d
     }, background)
 
   const closeDiff = () => {
