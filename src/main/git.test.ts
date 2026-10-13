@@ -87,7 +87,7 @@ afterAll(() => rmSync(dir, { recursive: true, force: true }))
 describe('git backend', () => {
   it('opens a repository from a subdirectory and reports head and refs', async () => {
     const info = await openRepo(join(dir, '.git'))
-    expect(info.path).toBe(g('rev-parse', '--show-toplevel'))
+    expect(info.path).toBe(realpathSync.native(g('rev-parse', '--show-toplevel'))) // native form on Windows
     expect(info.head).toEqual({ branch: 'main', sha: g('rev-parse', 'HEAD') })
     expect(info.refs.map((r) => r.name).sort()).toEqual(['main', 'topic', 'v1'])
     expect(info.refs.find((r) => r.name === 'v1')!.target).toBe(g('rev-parse', 'HEAD'))

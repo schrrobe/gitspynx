@@ -7,6 +7,7 @@
   "license": "UNLICENSED",
   "main": "./out/main/index.js",
   "scripts": {
+    "postinstall": "node tools/fix-node-pty.cjs",
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "start": "electron-vite preview",
