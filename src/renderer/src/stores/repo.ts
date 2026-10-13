@@ -500,9 +500,25 @@ export const useRepo = defineStore('repo', () => {
   const revFor = (r: Ref) => ((info.value?.refs ?? []).some((x) => x.fullName !== r.fullName && x.name === r.name) ? r.fullName : r.name)
   const mergeInto = (rev: string) => integrate((r) => window.gitspynx.merge(r, rev), `Merge „${shortRev(rev)}“`)
   const cherryPick = (sha: string) => integrate((r) => window.gitspynx.cherryPick(r, sha), `Cherry-Pick ${sha.slice(0, 7)}`)
-  // Recorded when HEAD stays on its branch (merge, cherry-pick, revert); a rebase runs detached.
-  const continueOp = () =>
-    integrate((r) => window.gitspynx.continueOperation(r), info.value?.operation ? `${OP_NAMES[info.value.operation]} abschließen` : undefined)
+  // Merge, cherry-pick and revert keep HEAD on its branch and are recorded like other actions. A
+  // rebase runs detached; once Continue finishes it, the branch is recorded as moved from where
+  // the rebase started (orig-head) to its new tip.
+  async function continueOp() {
+    const op = info.value?.operation
+    const path = info.value?.path
+    if (op !== 'rebase' || !path) return integrate((r) => window.gitspynx.continueOperation(r), op ? `${OP_NAMES[op]} abschließen` : undefined)
+    const start = await window.gitspynx.readRebaseState(path).catch(() => null)
+    const conflicted = await integrate((r) => window.gitspynx.continueOperation(r))
+    if (conflicted || !start || info.value?.path !== path || info.value.operation) return conflicted
+    const now = await gitHead(path)
+    if (now.branch === start.branch && now.sha && now.sha !== start.origHead)
+      record(path, {
+        label: 'Rebase abschließen',
+        undo: [{ type: 'reset', expect: now.sha, to: start.origHead, mode: 'keep', branch: start.branch }],
+        redo: [{ type: 'reset', expect: start.origHead, to: now.sha, mode: 'keep', branch: start.branch }]
+      })
+    return conflicted
+  }
   const skipOp = () => integrate((r) => window.gitspynx.skipOperation(r))
 
   async function rebaseOnto(rev: string) {

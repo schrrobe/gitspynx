@@ -752,6 +752,17 @@ describe('repo store', () => {
       expect(asked).toBe(false)
     })
 
+    it('records a rebase finished via Continue and undoes it back to where it started', async () => {
+      const repo = await opened()
+      repo.info = { ...repo.info!, operation: 'rebase' }
+      w().gitspynx.readRebaseState = async () => ({ branch: 'main', origHead: 'o1' })
+      w().gitspynx.continueOperation = async () => ((head = 'n1'), 'ok')
+      await repo.continueOp()
+      expect(repo.undoLabel).toBe('Rebase abschließen')
+      await repo.undo()
+      expect(applied.at(-1)).toEqual([{ type: 'reset', expect: 'n1', to: 'o1', mode: 'keep', branch: 'main' }])
+    })
+
     it('asks before undoing a commit that is already pushed', async () => {
       const repo = await opened()
       await repo.commit('Add feature', false)

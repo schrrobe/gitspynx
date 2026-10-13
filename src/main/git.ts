@@ -416,6 +416,18 @@ export async function continueOperation(repo: string): Promise<'ok' | 'conflicts
   return mayConflict(repo, [op, '--continue'])
 }
 
+// The branch a stopped rebase rewrites and its tip before the rebase (to undo the finished rebase).
+export async function rebaseState(repo: string): Promise<{ branch: string; origHead: string } | null> {
+  for (const name of ['rebase-merge', 'rebase-apply']) {
+    const dir = resolve(repo, (await run(['rev-parse', '--git-path', name], repo)).stdout.trim())
+    if (!existsSync(join(dir, 'head-name'))) continue
+    const [head, orig] = await Promise.all([readFile(join(dir, 'head-name'), 'utf8'), readFile(join(dir, 'orig-head'), 'utf8')])
+    if (!head.startsWith('refs/heads/')) return null // a detached HEAD was rebased
+    return { branch: head.trim().slice('refs/heads/'.length), origHead: orig.trim() }
+  }
+  return null
+}
+
 export async function abortOperation(repo: string): Promise<void> {
   const op = await currentOperation(repo)
   if (!op) throw new GitError('no operation in progress')

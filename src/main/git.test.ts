@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { setIdleHold, assertNewWorktreeBranch,
+import { rebaseState, setIdleHold, assertNewWorktreeBranch,
   abortOperation,
   lfsInfo,
   lfsTrack,
@@ -659,6 +659,19 @@ describe('merge, rebase, cherry-pick and conflicts', () => {
     expect(await currentOperation(md)).toBe('am')
     await abortOperation(md)
     expect(await currentOperation(md)).toBeNull()
+  })
+
+  it('tells which branch a stopped rebase rewrites and where it started', async () => {
+    m('switch', '-q', 'side')
+    const before = m('rev-parse', 'HEAD')
+    expect(await rebase(md, 'main')).toBe('conflicts')
+    try {
+      expect(await rebaseState(md)).toEqual({ branch: 'side', origHead: before })
+    } finally {
+      await abortOperation(md)
+      m('switch', '-q', 'main')
+    }
+    expect(await rebaseState(md)).toBeNull()
   })
 
   it('continues even when GIT_EDITOR points to a failing editor', async () => {

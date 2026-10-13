@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process'
 import { readFile, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { type DiffTarget, type GitspynxApi, type HunkSelection, type RebaseStep, type UndoStep, MAX_LOG_PAGE, type MenuItem, type RepoChange, type Resolution, type Session } from '../shared/types'
-import { setIdleHold, setGitEnv, assertNewWorktreeBranch,
+import { rebaseState, setIdleHold, setGitEnv, assertNewWorktreeBranch,
   abortOperation,
   addWorktree,
   applyUndo,
@@ -411,6 +411,7 @@ const handlers: Handlers = {
   stashApply: (_s, repo, sha, pop) => stashApply(knownRepo(repo), str(sha), pop === true),
   stashDrop: (_s, repo, sha) => stashDrop(knownRepo(repo), str(sha)),
   readConflict: (_s, repo, path) => readConflict(knownRepo(repo), str(path)),
+  readRebaseState: (_s, repo) => rebaseState(knownRepo(repo)),
   resolveConflict: (_s, repo, path, r) => resolveConflict(knownRepo(repo), str(path), resolution(r)),
   showContextMenu: (sender, items) => popupMenu(sender, menuItems(items)),
   async confirm(sender, message, detail, okLabel) {
