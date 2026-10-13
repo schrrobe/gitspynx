@@ -55,7 +55,9 @@ export const useTabs = defineStore('tabs', () => {
     remember()
     const my = ++seq
     if (!repo.info) active.value = index // nothing shown: highlight the tab being opened
-    await repo.open(path, 0, views.get(path))
+    const opening = repo.open(path, 0, views.get(path))
+    if (repo.info?.path === path) active.value = index // shown at once from memory while it reloads
+    await opening
     if (my !== seq) return
     syncActive()
     await persist()
@@ -78,6 +80,7 @@ export const useTabs = defineStore('tabs', () => {
     const [path] = tabs.value.splice(index, 1)
     tabs.value = [...tabs.value]
     views.delete(path)
+    repo.forget(path)
     if (repo.backgroundErrors.has(path)) {
       const rest = new Map(repo.backgroundErrors)
       rest.delete(path)

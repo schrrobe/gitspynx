@@ -49,6 +49,36 @@ export const useRepo = defineStore('repo', () => {
   // A loaded page only lays out its own rows (see layoutGraph).
   let lastLayout: ReturnType<typeof layoutGraph> | undefined
   const graph = computed(() => (lastLayout = layoutGraph(commits.value, lastLayout)))
+
+  // Recently shown repositories stay in memory: switching back to a tab shows it at once (with
+  // everything that was loaded) while it reloads behind the scenes.
+  // ponytail: 3 entries, each holding its loaded history (a fully loaded git/git is ~100 MB heap)
+  const recentRepos = new Map<string, { info: RepoInfo; commits: Commit[]; complete: boolean; status: FileStatus[]; layout: typeof lastLayout }>()
+  function remember() {
+    if (!info.value) return
+    recentRepos.delete(info.value.path)
+    recentRepos.set(info.value.path, { info: info.value, commits: commits.value, complete: complete.value, status: status.value, layout: lastLayout })
+    while (recentRepos.size > 3) recentRepos.delete(recentRepos.keys().next().value!)
+  }
+  const forget = (path: string) => void recentRepos.delete(path)
+
+  // Another repository is shown: selection and open views start fresh (or as the tab remembers
+  // them), and a failure that happened while it was in the background is reported now.
+  function enter(path: string, v?: View) {
+    const pending = backgroundErrors.value.get(path)
+    if (pending !== undefined) {
+      error.value = pending
+      const rest = new Map(backgroundErrors.value)
+      rest.delete(path)
+      backgroundErrors.value = rest
+    }
+    selected.value = null
+    detail.value = null
+    diffTarget.value = null
+    diff.value = null
+    conflict.value = null
+    if (v?.selected) void select(v.selected)
+  }
   const refsBySha = computed(() => {
     const map = new Map<string, RepoInfo['refs']>()
     for (const r of info.value?.refs ?? []) map.set(r.target, [...(map.get(r.target) ?? []), r])
@@ -111,6 +141,20 @@ export const useRepo = defineStore('repo', () => {
     tracked(guard(async () => {
       const gen = ++generation
       loading.value = true
+      const cached = path !== info.value?.path ? recentRepos.get(path) : undefined
+      if (cached) {
+        remember()
+        const v = typeof view === 'function' ? view(cached.info.path) : view
+        lastLayout = cached.layout
+        hidden.value = new Set(v?.hidden)
+        solo.value = v?.solo ?? null
+        info.value = cached.info
+        commits.value = cached.commits
+        complete.value = cached.complete
+        status.value = cached.status
+        enter(cached.info.path, v)
+        keepCount = Math.max(keepCount, cached.commits.length)
+      }
       try {
         const next = await window.gitspynx.openRepo(path)
         // Filters belong to the repository they were set in; they only become visible once this
@@ -124,11 +168,23 @@ export const useRepo = defineStore('repo', () => {
         let nextSolo = switching ? (v?.solo ?? null) : solo.value
         if (nextSolo && !known.has(nextSolo)) nextSolo = null
         const limit = Math.min(Math.max(PAGE, keepCount), MAX_LOG_PAGE)
-        const [first, files] = await Promise.all([
-          window.gitspynx.readLog(next.path, 0, limit, tipsFor(next, nextHidden, nextSolo)),
-          window.gitspynx.readStatus(next.path)
-        ])
+        const tips = tipsFor(next, nextHidden, nextSolo)
+        const [firstPage, files] = await Promise.all([window.gitspynx.readLog(next.path, 0, limit, tips), window.gitspynx.readStatus(next.path)])
+        let first = firstPage
+        let more = firstPage.length === limit // the last page read was full: history may go on
+        // A refresh keeps as many commits as were loaded, also beyond one maximal page.
+        while (more && first.length < keepCount) {
+          if (gen !== generation) return
+          const want = Math.min(MAX_LOG_PAGE, keepCount - first.length)
+          const page = await window.gitspynx.readLog(next.path, first.length, want, tips)
+          more = page.length === want
+          first = first.concat(page)
+        }
         if (gen !== generation) return
+        // Unchanged history (most watcher refreshes): keep the shown list, so neither the graph
+        // layout nor the rows are rebuilt.
+        const shown = commits.value
+        if (next.path === info.value?.path && first.length === shown.length && first.every((c, i) => c.sha === shown[i].sha)) first = shown
         hidden.value = nextHidden
         solo.value = nextSolo
         const samePath = info.value?.path === next.path
@@ -137,25 +193,13 @@ export const useRepo = defineStore('repo', () => {
           selected.value = null // the shown stash was popped or dropped
           detail.value = null
         }
+        if (!samePath) remember()
         info.value = next
         commits.value = first
         status.value = files
-        complete.value = first.length < limit
-        if (!samePath) {
-          const pending = backgroundErrors.value.get(next.path)
-          if (pending !== undefined) {
-            error.value = pending
-            const rest = new Map(backgroundErrors.value)
-            rest.delete(next.path)
-            backgroundErrors.value = rest
-          }
-          selected.value = null
-          detail.value = null
-          diffTarget.value = null
-          diff.value = null
-          conflict.value = null
-          if (v?.selected) void select(v.selected)
-        } else await refreshOpenDiff() // external commit/reset/checkout changed what the diff shows
+        complete.value = !more
+        if (!samePath) enter(next.path, v)
+        else await refreshOpenDiff() // external commit/reset/checkout changed what the diff shows
       } finally {
         if (gen === generation) loading.value = false
       }
@@ -716,6 +760,6 @@ export const useRepo = defineStore('repo', () => {
     graph, refsBySha, open, refresh, loadMore, select, refreshStatus, openDiff, closeDiff, stage, unstage, commit, close,
     checkoutBranch, createBranch, renameBranch, deleteBranch, busy, fetchAll, pullBranch, pushBranch, deleteRemoteBranch,
     conflict, mergeInto, rebaseOnto, cherryPick, continueOp, skipOp, abortOp, openConflict, resolve,
-    stash, applyStash, popLatestStash, dropStash, stageHunk, addWorktree, removeWorktree, pruneWorktrees, updateSubmodules, lfsTrack, lfsUntrack, lfsPull, undo, redo, undoLabel, redoLabel, rebasePlan, openRebasePlan, startRebase, hidden, solo, toggleHidden, toggleSolo, resetFilters, loadAll, revFor, backgroundErrors
+    stash, applyStash, popLatestStash, dropStash, stageHunk, addWorktree, removeWorktree, pruneWorktrees, updateSubmodules, lfsTrack, lfsUntrack, lfsPull, undo, redo, undoLabel, redoLabel, rebasePlan, openRebasePlan, startRebase, hidden, solo, toggleHidden, toggleSolo, resetFilters, loadAll, revFor, backgroundErrors, forget
   }
 })

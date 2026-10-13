@@ -715,6 +715,50 @@ describe('repo store', () => {
     })
   })
 
+  it('shows a recently shown repository at once from memory while it reloads', async () => {
+    const w = (globalThis as unknown as { window: { gitspynx: Record<string, unknown> } }).window
+    w.gitspynx.openRepo = async (p: string) => ({ ...info, path: p })
+    w.gitspynx.readLog = async (r: string) => page(r === '/r' ? 'r' : 'b', 3)
+    const repo = useRepo()
+    await repo.open('/r')
+    const shownR = repo.commits
+    await repo.open('/b')
+    const slow = deferred<Commit[]>()
+    w.gitspynx.readLog = () => slow.promise // the reload of /r is still running …
+    const back = repo.open('/r')
+    await flush()
+    expect(repo.info?.path).toBe('/r') // … but /r is already shown
+    expect(repo.commits).toBe(shownR)
+    slow.resolve(page('r', 3))
+    await back
+    expect(repo.commits).toBe(shownR) // unchanged history: same list
+  })
+
+  describe('refresh of a long history', () => {
+    const w = () => (globalThis as unknown as { window: { gitspynx: Record<string, unknown> } }).window
+    it('keeps everything that was loaded, beyond one maximal page', async () => {
+      const all = page('h', MAX_LOG_PAGE + 3000)
+      w().gitspynx.readLog = async (_r: string, skip: number, limit: number) => all.slice(skip, skip + limit)
+      const repo = useRepo()
+      await repo.open('/r')
+      await repo.loadAll()
+      expect(repo.commits.length).toBe(MAX_LOG_PAGE + 3000)
+      await repo.refresh(true)
+      expect(repo.commits.length).toBe(MAX_LOG_PAGE + 3000)
+    })
+
+    it('keeps the same commit list (no new layout) when the history did not change', async () => {
+      w().gitspynx.readLog = async (_r: string, skip: number, limit: number) => page('s', 3000).slice(skip, skip + limit)
+      const repo = useRepo()
+      await repo.open('/r')
+      const before = repo.commits
+      const layout = repo.graph
+      await repo.refresh(true)
+      expect(repo.commits).toBe(before)
+      expect(repo.graph).toBe(layout)
+    })
+  })
+
   it('loadAll waits for a refresh that is in flight instead of stopping', async () => {
     const repo = useRepo()
     const first = repo.open('/r')

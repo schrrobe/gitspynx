@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
-import { focusSearchRequest } from '../ui'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { focusSearchRequest, listScroll } from '../ui'
 import { nextHit as nextHitIndex, searchCommits } from '../search'
 import { ask } from '../prompt'
 import { useRepo, WIP } from '../stores/repo'
@@ -51,9 +51,17 @@ const visible = computed(() => {
   return repo.commits.slice(start, end).map((c, i) => ({ c, index: start + i, row: rows[start + i], top: (start + i) * ROW }))
 })
 
+// Each repository keeps its scroll position across tab switches.
+onMounted(() => {
+  const saved = repo.info && listScroll.get(repo.info.path)
+  if (saved && scroller.value) scroller.value.scrollTop = saved
+  onScroll()
+})
+
 function onScroll() {
   const el = scroller.value!
   scrollTop.value = el.scrollTop
+  if (repo.info) listScroll.set(repo.info.path, el.scrollTop)
   height.value = el.clientHeight
   if (el.scrollTop + el.clientHeight > el.scrollHeight - ROW * 50) repo.loadMore()
 }
