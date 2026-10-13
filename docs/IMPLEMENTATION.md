@@ -61,6 +61,19 @@ Alle Meilensteine **M0–M10** der Roadmap sind umgesetzt (Branch `feat/m0-m1-sc
 - [x] 20. Fetch, Pull, Push und Submodul-Updates laufen mit `--progress`; zwei Minuten ohne Ausgabe gelten als hängende Verbindung (auch bei SSH), Zeit in einem Passwort-Dialog zählt nicht. Große Übertragungen werden nicht mehr nach 2 bzw. 10 Minuten abgebrochen
 - [x] 21. Große Historien (git/git, 85.545 Commits): Neuladen behält alles Geladene (vorher auf 50.000 gekürzt) und baut eine unveränderte Historie nicht neu auf (längstes Frame 250 → 42 ms); die letzten drei Repos bleiben im Speicher, der Tabwechsel zurück zeigt sie in 57 ms mit Scrollposition (vorher ~450 ms und nur die ersten 2.000 Commits); der Diff ist virtualisiert (100.000 Zeilen in 0,5 s, vorher Abbruch nach 5.000). Layout und Suche bleiben im UI-Thread, gemessen unkritisch
 
+### Weitere offene Punkte
+
+- [ ] 22. SSH-Passphrase über die eigene Abfrage (`SSH_ASKPASS`) E2E prüfen
+- [ ] 23. Passwortabfrage in der gepackten App auf allen drei Systemen prüfen (Smoke-Test)
+- [ ] 24. `git revert` aus der Oberfläche
+- [ ] 25. Hunk bzw. Zeilen im Arbeitsverzeichnis verwerfen
+- [ ] 26. Inhaltssuche in der Historie (`git log -S` / `-G`)
+- [ ] 27. Terminal: Höhe verstellbar, mehrere Shells je Repo
+- [ ] 28. Worktrees sperren, entsperren und verschieben
+- [ ] 29. Submodule hinzufügen, entfernen und synchronisieren
+- [ ] 30. E2E-Treiber ins Repo und in die CI (alle drei Systeme)
+- [ ] 31. AltGr unter Windows prüfen
+
 ### Bewusst in Kauf genommen
 
 - AltGr: falls Chromium auf AltGr-Layouts auch echtes Ctrl+Alt als AltGr meldet, würden Kürzel wie Ctrl+Alt+X dort als X gelesen (nicht geprüft)
