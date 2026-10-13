@@ -26,7 +26,7 @@ function onKey(e: KeyboardEvent, i: number) {
     els[(to + n) % n]?.focus()
   } else if (e.key === 'Delete') {
     e.preventDefault()
-    void tabs.closeTab(i)
+    void tabs.closeTab(i).then(() => els[tabs.active]?.focus()) // keep keyboard focus in the strip
   }
 }
 
@@ -41,7 +41,7 @@ async function saveWorkspace() {
     <div class="tabs" role="tablist" aria-label="Offene Repositories">
       <div v-for="(path, i) in tabs.tabs" :key="path" class="tab" :class="{ active: i === tabs.active }" :title="path" @auxclick.middle="tabs.closeTab(i)">
         <button
-          :ref="(el) => (els[i] = el as HTMLButtonElement | null)"
+          :ref="(el) => el && (els[i] = el as HTMLButtonElement)"
           class="label"
           role="tab"
           :aria-selected="i === tabs.active"
@@ -52,7 +52,7 @@ async function saveWorkspace() {
         >
           {{ labels[i] }}
         </button>
-        <button class="close" tabindex="-1" :aria-label="`${labels[i]} schließen`" @click="tabs.closeTab(i)">×</button>
+        <button class="close" tabindex="-1" aria-hidden="true" :aria-label="`${labels[i]} schließen`" @click="tabs.closeTab(i)">×</button>
       </div>
     </div>
     <button class="add" aria-label="Repository öffnen" title="Repository öffnen" @click="emit('add')">+</button>

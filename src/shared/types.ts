@@ -20,6 +20,7 @@ export interface Ref {
   upstream?: string
   upstreamRemote?: string // branch.<name>.remote
   upstreamMerge?: string // branch.<name>.merge
+  upstreamGone?: boolean // the remote branch was deleted
   ahead?: number
   behind?: number
 }

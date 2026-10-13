@@ -13,6 +13,11 @@ describe('classifyChange', () => {
     expect(classifyChange('.git/refs/heads/main.lock')).toBe('ignore')
   })
 
+  it('still reports branches whose name contains an objects segment', () => {
+    expect(classifyChange('.git/refs/heads/feature/objects/x')).toBe('history')
+    expect(classifyChange('.git/modules/sub/objects/ab/cd')).toBe('ignore')
+  })
+
   it('treats index writes as status-only changes', () => {
     expect(classifyChange('.git/index')).toBe('status')
   })

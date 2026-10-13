@@ -41,7 +41,10 @@ export function jsonFile<T>(file: string, parse: (raw: unknown) => T) {
   let writing: Promise<void> = Promise.resolve()
   return {
     load(): Promise<T> {
-      loaded ??= readFile(file, 'utf8').then((t) => parse(JSON.parse(t)), () => parse(null))
+      loaded ??= readFile(file, 'utf8')
+        .then((t) => JSON.parse(t))
+        .catch(() => null) // missing or hand-broken file: defaults
+        .then(parse)
       return loaded
     },
     save(value: T): Promise<void> {

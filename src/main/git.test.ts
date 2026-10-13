@@ -176,6 +176,11 @@ describe('git backend', () => {
     expect(Date.now() - t0).toBeLessThan(8000)
   }, 15_000)
 
+  it('keeps the end of a long stderr, where git puts the actual error', async () => {
+    const noisy = 'alias.noisy=!head -c 1500000 /dev/zero | tr "\\0" x >&2; echo REAL_ERROR >&2; exit 1'
+    await expect(run(['-c', noisy, 'noisy'], dir)).rejects.toThrow(/REAL_ERROR/)
+  })
+
   it('kills the whole process tree on timeout', async () => {
     const marker = `sleep 7.${process.pid}`
     await expect(run(['-c', `alias.hang=!${marker}; true`, 'hang'], dir, [0], undefined, 300)).rejects.toThrow(/timed out/)
@@ -409,7 +414,7 @@ describe('remotes', () => {
     at(b, 'pull', '-q', '--rebase')
     at(b, 'commit', '-q', '--allow-empty', '-m', 'ff-able')
     at(b, 'push', '-q')
-    at(a, 'config', 'pull.ff', 'false')
+    at(a, 'config', 'pull.ff', 'no') // any boolean spelling git accepts
     await pull(a, 'merge')
     expect(at(a, 'log', '-1', '--format=%P').split(' ')).toHaveLength(2) // a merge commit, as configured
     at(a, 'config', '--unset', 'pull.ff')

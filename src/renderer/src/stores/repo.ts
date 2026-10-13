@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref, shallowRef } from 'vue'
-import { type Commit, type CommitDetail, type ConflictVersions, type DiffTarget, type FileDiff, type FileStatus, type HunkSelection, MAX_LOG_PAGE, type RebaseCommit, type RebaseStep, type UndoStep, type RepoInfo, type Resolution } from '../../../shared/types'
+import { type Commit, type CommitDetail, type ConflictVersions, type DiffTarget, type FileDiff, type FileStatus, type HunkSelection, MAX_LOG_PAGE, type RebaseCommit, type RebaseStep, type UndoStep, type RepoInfo, type Ref, type Resolution } from '../../../shared/types'
 import { layoutGraph } from '../graph/layout'
 import { ask } from '../prompt'
 
@@ -59,7 +59,9 @@ export const useRepo = defineStore('repo', () => {
     error.value = e instanceof Error ? e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '') : String(e)
   }
 
-  // background: a reload nobody asked for (watcher) keeps the messages of the last action
+  // background: a reload nobody asked for (watcher) keeps the messages of the last action, but
+  // takes back an error of its own once a later background run succeeds.
+  let backgroundError: string | null = null
   async function guard(fn: () => Promise<void>, background = false) {
     if (!background) {
       error.value = null
@@ -67,8 +69,10 @@ export const useRepo = defineStore('repo', () => {
     }
     try {
       await fn()
+      if (background && error.value !== null && error.value === backgroundError) error.value = null
     } catch (e) {
       report(e)
+      if (background) backgroundError = error.value
     }
   }
 
@@ -252,7 +256,8 @@ export const useRepo = defineStore('repo', () => {
       accepted = true
       return result
     }, 'Interaktiver Rebase')
-    if (accepted && rebasePlan.value === plan) rebasePlan.value = null
+    // a rebase that started and then stopped (hook, empty pick) continues in the operation bar
+    if ((accepted || info.value?.operation) && rebasePlan.value === plan) rebasePlan.value = null
   }
 
   const stageHunk = (sel: Omit<HunkSelection, 'path' | 'staged'>) =>
@@ -303,6 +308,7 @@ export const useRepo = defineStore('repo', () => {
     if (
       direction === 'undo' &&
       branch?.upstream &&
+      !branch.upstreamGone &&
       !branch.ahead &&
       !(await window.gitspynx.confirm(`„${entry.label}“ ist bereits gepusht.`, 'Rückgängig nimmt den Commit nur lokal zurück; auf dem Remote bleibt er.', 'Trotzdem rückgängig'))
     )
@@ -477,6 +483,8 @@ export const useRepo = defineStore('repo', () => {
 
   // Full refnames (sidebar) avoid ambiguity with a same-named tag; labels show the short name.
   const shortRev = (rev: string) => (/^[0-9a-f]{40}$/.test(rev) ? rev.slice(0, 7) : rev.replace(/^refs\/(heads|remotes|tags)\//, ''))
+  // Short name for git, unless a tag or branch shares it (then git would pick one by its own rules).
+  const revFor = (r: Ref) => ((info.value?.refs ?? []).some((x) => x.fullName !== r.fullName && x.name === r.name) ? r.fullName : r.name)
   const mergeInto = (rev: string) => integrate((r) => window.gitspynx.merge(r, rev), `Merge „${shortRev(rev)}“`)
   const cherryPick = (sha: string) => integrate((r) => window.gitspynx.cherryPick(r, sha), `Cherry-Pick ${sha.slice(0, 7)}`)
   // Recorded when HEAD stays on its branch (merge, cherry-pick, revert); a rebase runs detached.
@@ -569,7 +577,8 @@ export const useRepo = defineStore('repo', () => {
   }
 
   async function loadAll() {
-    while (info.value && !complete.value) {
+    const path = info.value?.path
+    while (info.value && info.value.path === path && !complete.value) { // another tab shown: stop
       if (loadRun) {
         await loadRun // a reload or page load is running; continue after it
         continue
@@ -660,6 +669,6 @@ export const useRepo = defineStore('repo', () => {
     graph, refsBySha, open, refresh, loadMore, select, refreshStatus, openDiff, closeDiff, stage, unstage, commit, close,
     checkoutBranch, createBranch, renameBranch, deleteBranch, busy, fetchAll, pullBranch, pushBranch, deleteRemoteBranch,
     conflict, mergeInto, rebaseOnto, cherryPick, continueOp, skipOp, abortOp, openConflict, resolve,
-    stash, applyStash, popLatestStash, dropStash, stageHunk, addWorktree, removeWorktree, pruneWorktrees, updateSubmodules, lfsTrack, lfsUntrack, lfsPull, undo, redo, undoLabel, redoLabel, rebasePlan, openRebasePlan, startRebase, hidden, solo, toggleHidden, toggleSolo, resetFilters, loadAll
+    stash, applyStash, popLatestStash, dropStash, stageHunk, addWorktree, removeWorktree, pruneWorktrees, updateSubmodules, lfsTrack, lfsUntrack, lfsPull, undo, redo, undoLabel, redoLabel, rebasePlan, openRebasePlan, startRebase, hidden, solo, toggleHidden, toggleSolo, resetFilters, loadAll, revFor
   }
 })

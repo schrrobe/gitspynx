@@ -1,8 +1,8 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { emptySession, latestOnly, parseSession, sessionFile, withTabs, withWorkspace, withoutWorkspace } from './session'
+import { emptySession, jsonFile, latestOnly, parseSession, sessionFile, withTabs, withWorkspace, withoutWorkspace } from './session'
 
 const allow = (p: string) => p.startsWith('/ok/')
 
@@ -51,6 +51,16 @@ describe('session file', () => {
     expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual(final)
     expect(await sessionFile(file).load()).toEqual(final)
     rmSync(dir, { recursive: true })
+  })
+})
+
+describe('jsonFile', () => {
+  it('falls back to defaults when the file holds invalid JSON', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gitspynx-json-'))
+    writeFileSync(join(dir, 's.json'), '{"theme": "dark",}')
+    const f = jsonFile(join(dir, 's.json'), (raw) => raw ?? 'defaults')
+    expect(await f.load()).toBe('defaults')
+    rmSync(dir, { recursive: true, force: true })
   })
 })
 

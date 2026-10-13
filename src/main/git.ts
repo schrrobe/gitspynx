@@ -59,8 +59,10 @@ export function run(args: string[], cwd: string, okCodes = [0], stdin?: string, 
     })
     let errSize = 0
     child.stderr.on('data', (d: Buffer) => {
+      err.push(d)
       errSize += d.length
-      if (errSize <= 1024 * 1024) err.push(d) // enough for any message; progress spam is dropped
+      // keep the last 1 MB: git's error line comes at the end, after any progress or hook output
+      while (errSize - err[0].length >= 1024 * 1024) errSize -= err.shift()!.length
     })
     child.on('error', (e: NodeJS.ErrnoException) => {
       clearTimeout(timer)
@@ -246,7 +248,8 @@ export async function pull(repo: string, mode: PullMode): Promise<'ok' | 'confli
   await run(['fetch', '--quiet'], repo, [0], undefined, NETWORK_TIMEOUT)
   // No explicit upstream argument: git then uses it with --fork-point, exactly like `git pull`.
   // A merge pull honours pull.ff like `git pull` does.
-  const pullFf = await config(repo, 'pull.ff')
+  // bool-or-str: git normalises no/off/0 to false, yes/on/1 to true
+  const pullFf = (await run(['config', '--type=bool-or-str', '--get', 'pull.ff'], repo, [0, 1])).stdout.trim()
   const ff = pullFf === 'only' ? ['--ff-only'] : pullFf === 'false' ? ['--no-ff'] : []
   const integrate = { 'ff-only': ['merge', '--ff-only'], rebase: ['rebase'], merge: ['merge', '--no-edit', ...ff] }[mode]
   return mayConflict(repo, integrate)

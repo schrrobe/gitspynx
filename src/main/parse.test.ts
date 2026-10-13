@@ -27,6 +27,7 @@ describe('parseRefs', () => {
     const out = [
       ['refs/heads/main', 'aaa', '', 'origin/main', '[ahead 2, behind 1]', 'origin', 'refs/heads/main'],
       ['refs/heads/topic', 'bbb', '', '', '', '', ''],
+      ['refs/heads/old', 'bb2', '', 'origin/old', '[gone]', 'origin', 'refs/heads/old'],
       ['refs/remotes/origin/main', 'ccc', '', '', '', '', ''],
       ['refs/remotes/origin/HEAD', 'ccc', '', '', '', '', ''],
       ['refs/tags/v1', 'tagobj', 'ddd', '', '', '', ''],
@@ -36,6 +37,7 @@ describe('parseRefs', () => {
     expect(parseRefs(out)).toEqual([
       { name: 'main', fullName: 'refs/heads/main', kind: 'local', target: 'aaa', upstream: 'origin/main', upstreamRemote: 'origin', upstreamMerge: 'refs/heads/main', ahead: 2, behind: 1 },
       { name: 'topic', fullName: 'refs/heads/topic', kind: 'local', target: 'bbb' },
+      { name: 'old', fullName: 'refs/heads/old', kind: 'local', target: 'bb2', upstream: 'origin/old', upstreamRemote: 'origin', upstreamMerge: 'refs/heads/old', upstreamGone: true, ahead: 0, behind: 0 },
       { name: 'origin/main', fullName: 'refs/remotes/origin/main', kind: 'remote', target: 'ccc' },
       { name: 'v1', fullName: 'refs/tags/v1', kind: 'tag', target: 'ddd' },
       { name: 'light', fullName: 'refs/tags/light', kind: 'tag', target: 'eee' },

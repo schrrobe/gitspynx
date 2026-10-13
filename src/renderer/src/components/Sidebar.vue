@@ -42,8 +42,8 @@ async function menu(r: Ref) {
   else if (id === 'rename') repo.renameBranch(r.name)
   else if (id === 'delete') repo.deleteBranch(r.name)
   else if (id === 'delete-remote') repo.deleteRemoteBranch(r.name)
-  else if (id === 'merge') repo.mergeInto(r.fullName)
-  else if (id === 'rebase') repo.rebaseOnto(r.fullName)
+  else if (id === 'merge') repo.mergeInto(repo.revFor(r)) // a full refname would end up in the merge message
+  else if (id === 'rebase') repo.rebaseOnto(repo.revFor(r))
   else if (id === 'worktree') openNewWorktree(r.name, null)
   else if (id === 'hide') repo.toggleHidden(r.fullName)
   else if (id === 'solo') repo.toggleSolo(r.fullName)

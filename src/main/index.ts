@@ -211,11 +211,14 @@ function unwatch() {
   watched?.watcher.close()
   watched = null
 }
+let watchSeq = 0
 async function watchOpenRepo(path: string, win: Electron.WebContents) {
   if (watched?.path === path) return
   unwatch()
+  const my = ++watchSeq
   const outside = await gitDirsOutside(path)
-  if (watched) return // another open won meanwhile
+  if (my !== watchSeq) return // a newer open takes over
+  unwatch() // an older open that finished first
   const watcher = watchRepo(
     path,
     outside,

@@ -305,6 +305,28 @@ describe('repo store', () => {
       expect(repo.selected).toBe(WIP)
     })
 
+    it('names a ref by its short name unless a tag or branch shares it', async () => {
+      const { repo } = await opened()
+      const side = { name: 'side', fullName: 'refs/heads/side', kind: 'local' as const, target: 'c1' }
+      const v1 = { name: 'v1', fullName: 'refs/heads/v1', kind: 'local' as const, target: 'c1' }
+      repo.info = { ...repo.info!, refs: [side, v1, { name: 'v1', fullName: 'refs/tags/v1', kind: 'tag', target: 'c2' }] }
+      expect(repo.revFor(side)).toBe('side')
+      expect(repo.revFor(v1)).toBe('refs/heads/v1')
+    })
+
+    it('closes the rebase dialog when git started the rebase but stopped with an error', async () => {
+      const { repo, w } = await opened()
+      w.gitspynx.readHead = async () => ({ sha: 'a0', branch: 'main' })
+      repo.rebasePlan = { base: 'b0', commits: [] }
+      w.gitspynx.interactiveRebase = async () => {
+        throw new Error('commit-msg hook rejected')
+      }
+      w.gitspynx.openRepo = async () => ({ ...info, operation: 'rebase' })
+      await repo.startRebase([])
+      expect(repo.rebasePlan).toBeNull()
+      expect(repo.error).toMatch(/hook/)
+    })
+
     it('labels a merge of a full refname with the short branch name', async () => {
       const { repo, w } = await opened()
       let sent = ''
@@ -564,6 +586,30 @@ describe('repo store', () => {
       expect(repo.detail).toBeNull()
     })
 
+    it('clears an error from a background reload once a later one succeeds', async () => {
+      const repo = await opened()
+      w().gitspynx.readStatus = async () => {
+        throw new Error('index.lock exists')
+      }
+      await repo.refreshStatus()
+      expect(repo.error).toMatch(/index.lock/)
+      w().gitspynx.readStatus = async () => []
+      await repo.refreshStatus()
+      expect(repo.error).toBeNull()
+    })
+
+    it('stops loading everything when another repository is shown', async () => {
+      const repo = await opened()
+      let bPages = 0
+      w().gitspynx.readLog = async (r: string) => (r === '/b' && bPages++, page(r === '/b' ? 'b' : 'c'))
+      w().gitspynx.openRepo = async (p: string) => ({ ...info, path: p })
+      const reload = repo.refresh()
+      const all = repo.loadAll() // waits for the reload
+      await repo.open('/b')
+      await Promise.all([reload, all])
+      expect(bPages).toBe(1) // only the first page of the newly shown repository
+    })
+
     it('keeps an error message across background reloads', async () => {
       const repo = await opened()
       repo.error = 'push rejected'
@@ -634,6 +680,16 @@ describe('repo store', () => {
       w().gitspynx.continueOperation = async () => ((head = 'm1'), 'ok')
       await repo.continueOp()
       expect(repo.undoLabel).toBe('Merge abschließen')
+    })
+
+    it('does not call a commit pushed when its upstream is gone', async () => {
+      const repo = await opened()
+      await repo.commit('Add feature', false)
+      repo.info = { ...repo.info!, refs: [{ name: 'main', fullName: 'refs/heads/main', kind: 'local', target: 'b1', upstream: 'origin/main', upstreamGone: true, ahead: 0, behind: 0 }] }
+      let asked = false
+      w().gitspynx.confirm = async () => ((asked = true), false)
+      await repo.undo()
+      expect(asked).toBe(false)
     })
 
     it('asks before undoing a commit that is already pushed', async () => {

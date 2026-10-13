@@ -45,6 +45,7 @@ export function parseRefs(out: string): Ref[] {
     if (upstream) {
       ref.upstream = upstream
       if (upstreamRemote && upstreamMerge) Object.assign(ref, { upstreamRemote, upstreamMerge }) // raw config, for undoing a delete
+      if (track === '[gone]') ref.upstreamGone = true
       ref.ahead = Number(/ahead (\d+)/.exec(track)?.[1] ?? 0)
       ref.behind = Number(/behind (\d+)/.exec(track)?.[1] ?? 0)
     }
