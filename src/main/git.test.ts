@@ -278,7 +278,7 @@ describe('working directory', () => {
     await unstage(wd, names)
     expect((await readStatus(wd)).filter((f) => f.staged && f.path.startsWith('many/'))).toHaveLength(0)
     rmSync(many, { recursive: true })
-  }, 30_000) // creates 12000 files
+  }, 120_000) // creates 12000 files; slow on Windows runners (hit 30 s there)
 
   it('unstages a file that was staged and then modified before the first commit', async () => {
     const fresh = mkdtempSync(join(tmpdir(), 'gitspynx-unborn-'))
