@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { connect } from 'node:net'
-import { devNull, tmpdir } from 'node:os'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { startAskpass } from './askpass'
@@ -17,8 +17,10 @@ const tempDir = () => {
 // git credential fill asks for username and password through GIT_ASKPASS, without any network.
 // Asynchronous: the askpass server runs in this process and must keep answering.
 function fill(env: Record<string, string>): Promise<{ status: number | null; stdout: string; stderr: string }> {
+  const emptyConfig = join(tempDir(), 'gitconfig') // git on Windows rejects \\.\nul as a config file
+  writeFileSync(emptyConfig, '')
   const git = spawn('git', ['credential', 'fill'], {
-    env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_GLOBAL: devNull, GIT_CONFIG_NOSYSTEM: '1', GIT_TRACE: '1', ...env }
+    env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_GLOBAL: emptyConfig, GIT_CONFIG_NOSYSTEM: '1', GIT_TRACE: '1', ...env }
   })
   let stdout = ''
   let stderr = ''
