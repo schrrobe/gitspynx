@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { hunkKey } from '../../../shared/hunk'
+import { offsetOf, rowIndex, visibleRows } from '../diffRows'
 import { keepSelection, type LinePos, type LineSelection, moveCursor, selectRange, toggleLine } from '../diffSelection'
 import { useRepo } from '../stores/repo'
 
-const MAX_LINES = 5000 // ponytail: plain DOM rows, virtualize like CommitList if huge diffs matter
 const repo = useRepo()
 
 const title = computed(() => {
@@ -12,15 +12,29 @@ const title = computed(() => {
   if (!t) return ''
   return 'sha' in t ? `${t.path} @ ${t.sha.slice(0, 7)}` : `${t.path} (${t.staged ? 'gestaged' : 'nicht gestaged'})`
 })
-const total = computed(() => repo.diff?.hunks.reduce((n, h) => n + h.lines.length, 0) ?? 0)
-const hunks = computed(() => {
-  let left = MAX_LINES
-  return (repo.diff?.hunks ?? []).map((h) => {
-    const lines = h.lines.slice(0, Math.max(0, left))
-    left -= lines.length
-    return { header: h.header, lines, truncated: lines.length < h.lines.length } // staging needs every line visible
-  })
+// Virtualized like the commit list: only the rows in view exist in the DOM, any diff size works.
+const body = ref<HTMLElement>()
+const scrollTop = ref(0)
+const viewHeight = ref(600)
+const index = computed(() => rowIndex((repo.diff?.hunks ?? []).map((h) => h.lines.length)))
+const rows = computed(() => visibleRows(index.value, Math.max(0, scrollTop.value - 200), viewHeight.value + 400))
+function onScroll() {
+  scrollTop.value = body.value?.scrollTop ?? 0
+  viewHeight.value = body.value?.clientHeight ?? viewHeight.value
+}
+const resize = new ResizeObserver(onScroll)
+watch(body, (el, old) => {
+  if (old) resize.unobserve(old)
+  if (el) resize.observe(el)
 })
+watch(() => repo.diffTarget, () => body.value && (body.value.scrollTop = 0)) // another file: start at the top
+function ensureVisible(pos: LinePos) {
+  const el = body.value
+  if (!el) return
+  const top = offsetOf(index.value, pos)
+  if (top < el.scrollTop) el.scrollTop = top
+  else if (top + 18 > el.scrollTop + el.clientHeight) el.scrollTop = top + 18 - el.clientHeight
+}
 
 // Hunk/line staging for working-directory diffs of tracked files.
 const stageable = computed(() => {
@@ -66,7 +80,7 @@ function onBodyKey(e: KeyboardEvent) {
     if (e.shiftKey) selection.value = selectRange(selection.value, repo.diff, anchor.value ?? cursor.value ?? next, next)
     if (!e.shiftKey || !anchor.value) anchor.value = e.shiftKey ? (cursor.value ?? next) : next
     cursor.value = next
-    document.getElementById(lineId(next))?.scrollIntoView({ block: 'nearest' })
+    ensureVisible(next)
   } else if (e.key === ' ' && cursor.value) pick(cursor.value, false)
   else if (e.key === 'Enter' && selectedCount.value) void stageSelected()
   else return
@@ -98,7 +112,10 @@ const onKey = (e: KeyboardEvent) => {
   repo.closeDiff()
 }
 onMounted(() => window.addEventListener('keydown', onKey))
-onUnmounted(() => window.removeEventListener('keydown', onKey))
+onUnmounted(() => {
+  window.removeEventListener('keydown', onKey)
+  resize.disconnect()
+})
 </script>
 
 <template>
@@ -110,44 +127,52 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
     <div v-if="!repo.diff" class="note dim">Lade…</div>
     <div v-else-if="repo.diff.binary" class="note dim">Binärdatei – kein Text-Diff.</div>
     <div v-else-if="!repo.diff.hunks.length" class="note dim">Keine Änderungen.</div>
-    <div
-      v-else
-      class="body mono"
-      :tabindex="lineSelectable ? 0 : -1"
-      :aria-label="lineSelectable ? 'Diff – ↑/↓ wählt eine geänderte Zeile, Shift erweitert, Leertaste markiert, Enter stagt die markierten Zeilen' : 'Diff'"
-      :aria-activedescendant="cursor ? lineId(cursor) : undefined"
-      @keydown="onBodyKey"
-      @focus="!cursor && repo.diff && (cursor = moveCursor(repo.diff, null, 1))"
-    >
+    <template v-else>
       <div v-if="lineSelectable && selectedCount" class="selbar">
         <span>{{ selectedCount }} {{ selectedCount === 1 ? 'Zeile' : 'Zeilen' }} markiert</span>
         <button :disabled="!!repo.busy" @click="stageSelected">{{ staged ? 'Markierte unstagen' : 'Markierte stagen' }} (Enter)</button>
         <button @click="selection = new Map()">Auswahl aufheben</button>
       </div>
-      <template v-for="(h, i) in hunks" :key="i">
-        <div v-if="h.lines.length" class="hunk">
-          <span class="dim">{{ h.header }}</span>
-          <template v-if="stageable && !h.truncated">
-            <button :disabled="!!repo.busy" @click="stageHunk(i)">{{ staged ? 'Hunk unstagen' : 'Hunk stagen' }}</button>
+      <div
+        ref="body"
+        class="body mono"
+        :tabindex="lineSelectable ? 0 : -1"
+        :aria-label="lineSelectable ? 'Diff – ↑/↓ wählt eine geänderte Zeile, Shift erweitert, Leertaste markiert, Enter stagt die markierten Zeilen' : 'Diff'"
+        :aria-activedescendant="cursor ? lineId(cursor) : undefined"
+        @scroll.passive="onScroll"
+        @keydown="onBodyKey"
+        @focus="!cursor && repo.diff && (cursor = moveCursor(repo.diff, null, 1))"
+      >
+        <div class="spacer" :style="{ height: `${index.total}px` }">
+          <template v-for="r in rows" :key="`${r.hunk}:${r.line}`">
+            <div v-if="r.line < 0" class="hunk" :style="{ top: `${r.top}px` }">
+              <span class="dim">{{ repo.diff.hunks[r.hunk].header }}</span>
+              <button v-if="stageable" :disabled="!!repo.busy" @click="stageHunk(r.hunk)">{{ staged ? 'Hunk unstagen' : 'Hunk stagen' }}</button>
+            </div>
+            <div
+              v-else
+              :id="lineId(r)"
+              class="line"
+              :style="{ top: `${r.top}px` }"
+              :class="{
+                add: repo.diff.hunks[r.hunk].lines[r.line].type === '+',
+                del: repo.diff.hunks[r.hunk].lines[r.line].type === '-',
+                pickable: lineSelectable && repo.diff.hunks[r.hunk].lines[r.line].type !== ' ',
+                picked: isPicked(r.hunk, r.line),
+                cursor: cursor?.hunk === r.hunk && cursor.line === r.line
+              }"
+              @click="pick({ hunk: r.hunk, line: r.line }, $event.shiftKey)"
+              @mousedown="$event.shiftKey && lineSelectable && $event.preventDefault()"
+            >
+              <span class="no">{{ repo.diff.hunks[r.hunk].lines[r.line].oldNo ?? '' }}</span>
+              <span class="no">{{ repo.diff.hunks[r.hunk].lines[r.line].newNo ?? '' }}</span>
+              <span class="sign">{{ repo.diff.hunks[r.hunk].lines[r.line].type === ' ' ? '' : repo.diff.hunks[r.hunk].lines[r.line].type }}</span>
+              <span class="text">{{ repo.diff.hunks[r.hunk].lines[r.line].text }}</span>
+            </div>
           </template>
         </div>
-        <div
-          v-for="(l, j) in h.lines"
-          :id="lineId({ hunk: i, line: j })"
-          :key="j"
-          class="line"
-          :class="{ add: l.type === '+', del: l.type === '-', pickable: lineSelectable && l.type !== ' ', picked: isPicked(i, j), cursor: cursor?.hunk === i && cursor.line === j }"
-          @click="pick({ hunk: i, line: j }, $event.shiftKey)"
-          @mousedown="$event.shiftKey && lineSelectable && $event.preventDefault()"
-        >
-          <span class="no">{{ l.oldNo ?? '' }}</span>
-          <span class="no">{{ l.newNo ?? '' }}</span>
-          <span class="sign">{{ l.type === ' ' ? '' : l.type }}</span>
-          <span class="text">{{ l.text }}</span>
-        </div>
-      </template>
-      <div v-if="total > MAX_LINES" class="note dim">{{ total - MAX_LINES }} weitere Zeilen ausgeblendet.</div>
-    </div>
+      </div>
+    </template>
   </section>
 </template>
 
@@ -155,17 +180,20 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
 .diff { display: flex; flex-direction: column; min-height: 0; }
 header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 12px; border-bottom: 1px solid var(--border); }
 header strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.body { flex: 1; overflow: auto; user-select: text; line-height: 20px; }
-.hunk { display: flex; align-items: center; gap: 8px; padding: 3px 12px; background: var(--bg-panel); border-block: 1px solid var(--border); }
+.body { flex: 1; min-height: 0; overflow: auto; user-select: text; line-height: 18px; }
+/* fixed row heights (diffRows.ts): HUNK_H 30, LINE_H 18 */
+.spacer { position: relative; min-width: 100%; }
+.hunk, .line { position: absolute; left: 0; min-width: 100%; box-sizing: border-box; }
+.hunk { height: 30px; display: flex; align-items: center; gap: 8px; padding: 0 12px; background: var(--bg-panel); border-block: 1px solid var(--border); }
 .hunk span { flex: 1; }
 .hunk button { padding: 0 8px; font: 12px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
 .line.pickable { cursor: pointer; }
-.selbar { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 8px; padding: 4px 8px; background: var(--bg-selected); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+.selbar { display: flex; align-items: center; gap: 8px; padding: 4px 8px; background: var(--bg-selected); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
 .selbar span { flex: 1; }
 .body:focus { outline: none; }
 .body:focus .line.cursor { outline: 1px dashed var(--accent); outline-offset: -1px; }
 .line.picked { box-shadow: inset 3px 0 0 var(--accent); filter: brightness(1.12); }
-.line { display: flex; white-space: pre; min-width: max-content; }
+.line { height: 18px; display: flex; white-space: pre; }
 .line.add { background: color-mix(in srgb, var(--lane-2) 16%, transparent); }
 .line.del { background: color-mix(in srgb, var(--danger) 16%, transparent); }
 .no { width: 48px; flex: none; text-align: right; padding-right: 8px; color: var(--text-dim); user-select: none; }
