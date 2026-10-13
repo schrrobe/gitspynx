@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { assertNewWorktreeBranch,
+import { setIdleHold, assertNewWorktreeBranch,
   abortOperation,
   lfsInfo,
   lfsTrack,
@@ -184,6 +184,24 @@ describe('git backend', () => {
     const t0 = Date.now()
     await expect(run(['-c', 'alias.stubborn=!trap "" TERM; sleep 30', 'stubborn'], dir, [0], undefined, 300)).rejects.toThrow(/timed out/)
     expect(Date.now() - t0).toBeLessThan(8000)
+  }, 15_000)
+
+  it('stops a command that shows no progress for the idle limit, unless a prompt holds it', async () => {
+    const quiet = ['-c', 'alias.quiet=!sleep 5', 'quiet']
+    const t0 = Date.now()
+    await expect(run(quiet, dir, [0], undefined, 0, {}, 300)).rejects.toThrow(/no progress/)
+    expect(Date.now() - t0).toBeLessThan(4000)
+    const chatty = ['-c', 'alias.chatty=!for i in 1 2 3 4 5 6; do echo tick >&2; sleep 0.1; done', 'chatty']
+    await expect(run(chatty, dir, [0], undefined, 0, {}, 400)).resolves.toBeTruthy()
+    let held = true
+    setIdleHold(() => held) // e.g. a password dialog is open
+    try {
+      const short = ['-c', 'alias.short=!sleep 1', 'short']
+      await expect(run(short, dir, [0], undefined, 0, {}, 300)).resolves.toBeTruthy()
+    } finally {
+      held = false
+      setIdleHold(() => false)
+    }
   }, 15_000)
 
   it('keeps the end of a long stderr, where git puts the actual error', async () => {

@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process'
 import { readFile, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { type DiffTarget, type GitspynxApi, type HunkSelection, type RebaseStep, type UndoStep, MAX_LOG_PAGE, type MenuItem, type RepoChange, type Resolution, type Session } from '../shared/types'
-import { setGitEnv, assertNewWorktreeBranch,
+import { setIdleHold, setGitEnv, assertNewWorktreeBranch,
   abortOperation,
   addWorktree,
   applyUndo,
@@ -513,6 +513,7 @@ app.whenReady().then(async () => {
   await startAskpass(join(app.getPath('userData'), 'askpass'), process.execPath, askInWindow).then(
     (askpass) => {
       setGitEnv(askpass.env)
+      setIdleHold(() => askpassPending.size > 0) // typing a password is not a stalled transfer
       app.once('will-quit', askpass.close) // removes the socket file
     },
     (e) => console.error('askpass unavailable:', e)

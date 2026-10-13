@@ -21,18 +21,24 @@ interface Result {
 
 const MAX_OUTPUT = 256 * 1024 * 1024
 
-// Runs git without a shell. Exit codes listed in okCodes are returned instead of thrown.
-// A timeout kills git's whole process group (ssh, credential helpers, hooks included).
 // Added to every git call (askpass bridge); set once at start-up.
 let sharedEnv: Record<string, string> = {}
 export const setGitEnv = (env: Record<string, string>) => void (sharedEnv = env)
+// True while git legitimately waits for the user (a credential prompt is open): idle time then
+// does not count as a stall.
+let idleHold = () => false
+export const setIdleHold = (hold: () => boolean) => void (idleHold = hold)
 
-export function run(args: string[], cwd: string, okCodes = [0], stdin?: string, timeout = 0, env: Record<string, string> = {}): Promise<Result> {
+// Runs git without a shell. Exit codes listed in okCodes are returned instead of thrown.
+// timeout: wall-clock limit; idle: limit for a stretch without any output (network commands run
+// with --progress, so silence means a stalled transfer). Either kills git's whole process group
+// (ssh, credential helpers, hooks included).
+export function run(args: string[], cwd: string, okCodes = [0], stdin?: string, timeout = 0, env: Record<string, string> = {}, idle = 0): Promise<Result> {
   return new Promise((resolve, reject) => {
     if (!existsSync(cwd)) return reject(new GitError(`folder not found: ${cwd}`))
     const child = spawn('git', ['--no-optional-locks', ...args], {
       cwd,
-      detached: timeout > 0 && process.platform !== 'win32', // own process group for the timer
+      detached: (timeout > 0 || idle > 0) && process.platform !== 'win32', // own process group for the timers
       // English messages for the few checks that match git output; never wait for an editor
       // (continue keeps the prepared message). Hooks inherit only these.
       env: { ...process.env, GIT_TERMINAL_PROMPT: '0', LC_MESSAGES: 'C', GIT_EDITOR: 'true', ...sharedEnv, ...env }
@@ -44,7 +50,7 @@ export function run(args: string[], cwd: string, okCodes = [0], stdin?: string, 
     const signal = (sig: NodeJS.Signals) => {
       try {
         if (process.platform === 'win32' && child.pid) spawn('taskkill', ['/pid', String(child.pid), '/T', '/F']) // whole tree
-        else if (child.pid && timeout > 0) process.kill(-child.pid, sig)
+        else if (child.pid && (timeout > 0 || idle > 0)) process.kill(-child.pid, sig)
         else child.kill(sig)
       } catch {
         child.kill(sig)
@@ -57,13 +63,23 @@ export function run(args: string[], cwd: string, okCodes = [0], stdin?: string, 
       hardKill ??= setTimeout(() => signal('SIGKILL'), 3000) // for processes that ignore SIGTERM
     }
     const timer = timeout > 0 ? setTimeout(() => stop(new GitError(`git ${args[0]} timed out after ${timeout / 1000}s`)), timeout) : undefined
+    let lastOutput = Date.now()
+    const idleTimer =
+      idle > 0
+        ? setInterval(() => {
+            if (idleHold()) lastOutput = Date.now()
+            else if (Date.now() - lastOutput >= idle) stop(new GitError(`git ${args[0]} stalled: no progress for ${Math.round(idle / 1000)}s`))
+          }, Math.min(1000, idle / 4))
+        : undefined
     child.stdout.on('data', (d: Buffer) => {
+      lastOutput = Date.now()
       size += d.length
       if (size > MAX_OUTPUT) stop(new GitError(`git ${args[0]} output too large`))
       else out.push(d)
     })
     let errSize = 0
     child.stderr.on('data', (d: Buffer) => {
+      lastOutput = Date.now()
       err.push(d)
       errSize += d.length
       // keep the last 1 MB: git's error line comes at the end, after any progress or hook output
@@ -71,10 +87,12 @@ export function run(args: string[], cwd: string, okCodes = [0], stdin?: string, 
     })
     child.on('error', (e: NodeJS.ErrnoException) => {
       clearTimeout(timer)
+      clearInterval(idleTimer)
       reject(new GitError(e.code === 'ENOENT' ? 'git executable not found — is git installed?' : e.message))
     })
     child.on('close', (code) => {
       clearTimeout(timer)
+      clearInterval(idleTimer)
       clearTimeout(hardKill)
       const stderr = Buffer.concat(err).toString()
       if (failure) return reject(new GitError(failure.message, code, stderr))
@@ -253,11 +271,14 @@ export async function deleteBranch(repo: string, name: string, force: boolean): 
   await run(['branch', force ? '-D' : '-d', name], repo)
 }
 
-const NETWORK_TIMEOUT = 120_000 // fetch: stalls are failures
-const PUSH_TIMEOUT = 600_000 // push may legitimately upload a lot
+// Transfers run with --progress: two minutes without any output is a stalled connection (also a
+// dead SSH session); the wall-clock limit is only a backstop for huge but moving transfers.
+const STALL = 120_000
+const BACKSTOP = 30 * 60_000
+const transfer = (args: string[], repo: string) => run(args, repo, [0], undefined, BACKSTOP, {}, STALL)
 
 export async function fetchAll(repo: string): Promise<void> {
-  await run(['fetch', '--all', '--prune', '--quiet'], repo, [0], undefined, NETWORK_TIMEOUT)
+  await transfer(['fetch', '--all', '--prune', '--progress'], repo)
 }
 
 export type PullMode = 'ff-only' | 'rebase' | 'merge'
@@ -267,7 +288,7 @@ export type PullMode = 'ff-only' | 'rebase' | 'merge'
 export async function pull(repo: string, mode: PullMode): Promise<'ok' | 'conflicts'> {
   const upstream = await run(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'], repo, [0, 128])
   if (upstream.code !== 0) throw new GitError('the current branch has no upstream branch')
-  await run(['fetch', '--quiet'], repo, [0], undefined, NETWORK_TIMEOUT)
+  await transfer(['fetch', '--progress'], repo)
   // No explicit upstream argument: git then uses it with --fork-point, exactly like `git pull`.
   // A merge pull honours pull.ff like `git pull` does.
   // bool-or-str: git normalises no/off/0 to false, yes/on/1 to true
@@ -294,13 +315,13 @@ export async function push(repo: string, force: boolean): Promise<void> {
   const lease = force ? ['--force-with-lease', '--force-if-includes'] : []
   const upstream = await run(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'], repo, [0, 128])
   if (upstream.code === 0) {
-    await run(['push', ...lease], repo, [0], undefined, PUSH_TIMEOUT)
+    await transfer(['push', '--progress', ...lease], repo)
     return
   }
   const all = await remotes(repo)
   if (!all.length) throw new GitError('no remote configured')
   const target = (await config(repo, 'remote.pushDefault')) || (all.includes('origin') ? 'origin' : all[0])
-  await run(['push', '-u', ...lease, target, 'HEAD'], repo, [0], undefined, PUSH_TIMEOUT)
+  await transfer(['push', '--progress', '-u', ...lease, target, 'HEAD'], repo)
 }
 
 export function isRejectedPush(e: unknown): boolean {
@@ -313,7 +334,7 @@ export async function deleteRemoteBranch(repo: string, remoteBranch: string): Pr
   if (!remote) throw new GitError(`unknown remote branch: ${remoteBranch}`)
   const branch = remoteBranch.slice(remote.length + 1)
   await assertBranchName(repo, branch)
-  await run(['push', remote, '--delete', `refs/heads/${branch}`], repo, [0], undefined, PUSH_TIMEOUT)
+  await transfer(['push', '--progress', remote, '--delete', `refs/heads/${branch}`], repo)
 }
 
 // Git directories that live outside the work tree (linked worktrees, submodules), so a
@@ -744,17 +765,16 @@ export async function listSubmodules(repo: string): Promise<Submodule[]> {
 
 // Given paths: initialize (if needed) and update just those. Empty: update the initialized ones
 // only, so submodules left uninitialized on purpose are not cloned. Paths are passed as
-// :(literal) pathspecs (a global --literal-pathspecs would leak into submodule hooks). No
-// wall-clock limit (an initial clone can take long); HTTP transfers that stall are aborted.
-// ponytail: an SSH transfer that stalls is only stopped by the 30 min backstop
+// :(literal) pathspecs (a global --literal-pathspecs would leak into submodule hooks). An initial
+// clone can take long, so only a stall (no progress output, see STALL) ends it early.
 // Resolves to the submodules git skipped (update = none in .gitmodules or the local config).
 export async function updateSubmodules(repo: string, paths: string[]): Promise<string[]> {
   const stall = ['-c', 'http.lowSpeedLimit=1000', '-c', 'http.lowSpeedTime=60']
   const args = paths.length
-    ? [...stall, 'submodule', 'update', '--init', '--recursive', '--', ...paths.map((p) => `:(literal)${p}`)]
-    : [...stall, 'submodule', 'update', '--recursive']
-  const result = await run(args, repo, [0], undefined, 30 * 60_000)
-  return [...result.stderr.matchAll(/^Skipping submodule '(.+)'$/gm)].map((m) => m[1])
+    ? [...stall, 'submodule', 'update', '--progress', '--init', '--recursive', '--', ...paths.map((p) => `:(literal)${p}`)]
+    : [...stall, 'submodule', 'update', '--progress', '--recursive']
+  const result = await run(args, repo, [0], undefined, BACKSTOP, {}, STALL)
+  return [...result.stderr.matchAll(/Skipping submodule '(.+?)'$/gm)].map((m) => m[1]) // progress lines may share the line (\r)
 }
 
 // ---- Git LFS ----
