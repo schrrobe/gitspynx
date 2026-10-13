@@ -585,6 +585,28 @@ describe('repo store', () => {
       expect(repo.solo).toBe('refs/heads/topic')
     })
 
+    it('keeps the error of a background operation for its tab and shows it on return', async () => {
+      const repo = useRepo()
+      const first = repo.open('/r')
+      await flush()
+      logCalls[0].d.resolve(page('c', 3))
+      await first
+      const fetch = deferred<void>()
+      w().gitspynx.fetch = () => fetch.promise
+      const running = repo.fetchAll()
+      await flush()
+      w().gitspynx.openRepo = async (p: string) => ({ ...info, path: p })
+      w().gitspynx.readLog = async () => page('b', 3)
+      await repo.open('/b')
+      ;(fetch as unknown as { resolve: (v: unknown) => void }).resolve(Promise.reject(new Error('network down')))
+      await running
+      expect(repo.error).toBeNull()
+      expect(repo.backgroundErrors.get('/r')).toBe('network down')
+      await repo.open('/r')
+      expect(repo.error).toBe('network down')
+      expect(repo.backgroundErrors.has('/r')).toBe(false)
+    })
+
     it('scopes a running network operation to its repository', async () => {
       const repo = useRepo()
       const first = repo.open('/r')

@@ -78,6 +78,11 @@ export const useTabs = defineStore('tabs', () => {
     const [path] = tabs.value.splice(index, 1)
     tabs.value = [...tabs.value]
     views.delete(path)
+    if (repo.backgroundErrors.has(path)) {
+      const rest = new Map(repo.backgroundErrors)
+      rest.delete(path)
+      repo.backgroundErrors = rest
+    }
     if (!tabs.value.length) {
       active.value = 0
       repo.close()

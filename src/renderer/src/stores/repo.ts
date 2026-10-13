@@ -57,9 +57,13 @@ export const useRepo = defineStore('repo', () => {
   const staged = computed(() => status.value.filter((f) => f.staged))
   const unstaged = computed(() => status.value.filter((f) => f.unstaged))
 
+  const message = (e: unknown) => (e instanceof Error ? e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '') : String(e))
   function report(e: unknown) {
-    error.value = e instanceof Error ? e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '') : String(e)
+    error.value = message(e)
   }
+  // Failures of operations whose repository is no longer shown (another tab was opened meanwhile):
+  // the tab shows a mark, the message appears when the repository is shown again.
+  const backgroundErrors = shallowRef(new Map<string, string>())
 
   // background: a reload nobody asked for (watcher) keeps the messages of the last action, but
   // takes back an error of its own once a later background run succeeds.
@@ -138,6 +142,13 @@ export const useRepo = defineStore('repo', () => {
         status.value = files
         complete.value = first.length < limit
         if (!samePath) {
+          const pending = backgroundErrors.value.get(next.path)
+          if (pending !== undefined) {
+            error.value = pending
+            const rest = new Map(backgroundErrors.value)
+            rest.delete(next.path)
+            backgroundErrors.value = rest
+          }
           selected.value = null
           detail.value = null
           diffTarget.value = null
@@ -375,7 +386,10 @@ export const useRepo = defineStore('repo', () => {
     } catch (e) {
       failure = e ?? new Error('failed')
     }
-    if (info.value?.path !== path) return failure === null
+    if (info.value?.path !== path) {
+      if (failure !== null) backgroundErrors.value = new Map(backgroundErrors.value).set(path, message(failure))
+      return failure === null
+    }
     await refresh() // reloading clears messages, so report afterwards
     if (failure !== null && info.value?.path === path) report(failure)
     return failure === null
@@ -702,6 +716,6 @@ export const useRepo = defineStore('repo', () => {
     graph, refsBySha, open, refresh, loadMore, select, refreshStatus, openDiff, closeDiff, stage, unstage, commit, close,
     checkoutBranch, createBranch, renameBranch, deleteBranch, busy, fetchAll, pullBranch, pushBranch, deleteRemoteBranch,
     conflict, mergeInto, rebaseOnto, cherryPick, continueOp, skipOp, abortOp, openConflict, resolve,
-    stash, applyStash, popLatestStash, dropStash, stageHunk, addWorktree, removeWorktree, pruneWorktrees, updateSubmodules, lfsTrack, lfsUntrack, lfsPull, undo, redo, undoLabel, redoLabel, rebasePlan, openRebasePlan, startRebase, hidden, solo, toggleHidden, toggleSolo, resetFilters, loadAll, revFor
+    stash, applyStash, popLatestStash, dropStash, stageHunk, addWorktree, removeWorktree, pruneWorktrees, updateSubmodules, lfsTrack, lfsUntrack, lfsPull, undo, redo, undoLabel, redoLabel, rebasePlan, openRebasePlan, startRebase, hidden, solo, toggleHidden, toggleSolo, resetFilters, loadAll, revFor, backgroundErrors
   }
 })

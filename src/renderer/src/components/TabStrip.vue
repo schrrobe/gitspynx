@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed, nextTick, watch } from 'vue'
 import { ask } from '../prompt'
+import { useRepo } from '../stores/repo'
 import { tabLabels, useTabs } from '../stores/tabs'
 
 const emit = defineEmits<{ add: [] }>()
 const tabs = useTabs()
+const repo = useRepo()
 const labels = computed(() => tabLabels(tabs.tabs))
 const els: (HTMLButtonElement | null)[] = [] // by tab index
 
@@ -39,7 +41,14 @@ async function saveWorkspace() {
 <template>
   <div class="strip">
     <div class="tabs" role="tablist" aria-label="Offene Repositories">
-      <div v-for="(path, i) in tabs.tabs" :key="path" class="tab" :class="{ active: i === tabs.active }" :title="path" @auxclick.middle="tabs.closeTab(i)">
+      <div
+        v-for="(path, i) in tabs.tabs"
+        :key="path"
+        class="tab"
+        :class="{ active: i === tabs.active }"
+        :title="repo.backgroundErrors.has(path) ? `${path}\nFehler: ${repo.backgroundErrors.get(path)}` : path"
+        @auxclick.middle="tabs.closeTab(i)"
+      >
         <button
           :ref="(el) => el && (els[i] = el as HTMLButtonElement)"
           class="label"
@@ -50,7 +59,7 @@ async function saveWorkspace() {
           @click="tabs.activate(i)"
           @keydown="onKey($event, i)"
         >
-          {{ labels[i] }}
+          <span v-if="repo.backgroundErrors.has(path)" class="failed" aria-label="Fehler" />{{ labels[i] }}
         </button>
         <button class="close" tabindex="-1" aria-hidden="true" :aria-label="`${labels[i]} schließen`" @click="tabs.closeTab(i)">×</button>
       </div>
@@ -78,6 +87,7 @@ async function saveWorkspace() {
 .tab:hover { background: var(--bg-hover); }
 .tab.active { background: var(--bg-panel); border-color: var(--border); color: var(--text); padding-bottom: 1px; }
 .label { border: 0; background: none; color: inherit; padding: 4px 4px 4px 12px; cursor: default; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.failed { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--danger); margin-right: 6px; vertical-align: 1px; }
 .close { border: 0; background: none; padding: 0 6px 0 4px; line-height: 1; color: inherit; visibility: hidden; }
 .tab:hover .close, .tab.active .close { visibility: visible; }
 .close:hover { color: var(--danger); }
