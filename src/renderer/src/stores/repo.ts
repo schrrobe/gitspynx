@@ -360,7 +360,9 @@ export const useRepo = defineStore('repo', () => {
   async function deleteBranch(name: string) {
     if (!(await window.gitspynx.confirm(`Branch „${name}“ löschen?`, '', 'Löschen'))) return
     const path = info.value?.path
-    const sha = info.value?.refs.find((r) => r.kind === 'local' && r.name === name)?.target
+    const ref = info.value?.refs.find((r) => r.kind === 'local' && r.name === name)
+    const sha = ref?.target
+    const upstream = ref?.upstreamRemote && ref.upstreamMerge ? { upstream: { remote: ref.upstreamRemote, merge: ref.upstreamMerge } } : {}
     let deleted = false
     await mutate(async (r) => {
       try {
@@ -379,7 +381,7 @@ export const useRepo = defineStore('repo', () => {
       deleted = true
     })
     if (deleted && path && sha)
-      record(path, { label: `Branch „${name}“ gelöscht`, undo: [{ type: 'createBranch', name, sha }], redo: [{ type: 'deleteBranch', name, expect: sha }] })
+      record(path, { label: `Branch „${name}“ gelöscht`, undo: [{ type: 'createBranch', name, sha, ...upstream }], redo: [{ type: 'deleteBranch', name, expect: sha }] })
   }
 
   async function network(kind: NetworkKind, op: (repo: string) => Promise<void>) {
@@ -396,15 +398,15 @@ export const useRepo = defineStore('repo', () => {
   }
 
   const fetchAll = () => network('fetch', (r) => window.gitspynx.fetch(r))
-  const pullBranch = (mode: 'ff-only' | 'rebase' | 'merge' = 'ff-only') =>
-    recordHeadMove('Pull', 'keep', async () => {
-      let ok = false
-      await network('pull', async (r) => {
-        await window.gitspynx.pull(r, mode)
-        ok = true
-      })
-      return ok
+  async function pullBranch(mode: 'ff-only' | 'rebase' | 'merge' = 'ff-only') {
+    const path = info.value?.path
+    let result = 'failed' as 'ok' | 'conflicts' | 'failed'
+    await recordHeadMove('Pull', 'keep', async () => {
+      await network('pull', async (r) => void (result = await window.gitspynx.pull(r, mode)))
+      return result === 'ok'
     })
+    if (result === 'conflicts' && info.value?.path === path) await select(WIP) // resolve them in the working directory
+  }
 
   const pushBranch = () =>
     network('push', async (r) => {

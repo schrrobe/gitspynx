@@ -25,16 +25,16 @@ describe('parseLog', () => {
 describe('parseRefs', () => {
   it('classifies refs, peels annotated tags and reads ahead/behind', () => {
     const out = [
-      ['refs/heads/main', 'aaa', '', 'origin/main', '[ahead 2, behind 1]'],
-      ['refs/heads/topic', 'bbb', '', '', ''],
-      ['refs/remotes/origin/main', 'ccc', '', '', ''],
-      ['refs/remotes/origin/HEAD', 'ccc', '', '', ''],
-      ['refs/tags/v1', 'tagobj', 'ddd', '', ''],
-      ['refs/tags/light', 'eee', '', '', ''],
-      ['refs/stash', 'fff', '', '', '']
+      ['refs/heads/main', 'aaa', '', 'origin/main', '[ahead 2, behind 1]', 'origin', 'refs/heads/main'],
+      ['refs/heads/topic', 'bbb', '', '', '', '', ''],
+      ['refs/remotes/origin/main', 'ccc', '', '', '', '', ''],
+      ['refs/remotes/origin/HEAD', 'ccc', '', '', '', '', ''],
+      ['refs/tags/v1', 'tagobj', 'ddd', '', '', '', ''],
+      ['refs/tags/light', 'eee', '', '', '', '', ''],
+      ['refs/stash', 'fff', '', '', '', '', '']
     ].map((f) => f.join(US)).join('\n') + '\n'
     expect(parseRefs(out)).toEqual([
-      { name: 'main', fullName: 'refs/heads/main', kind: 'local', target: 'aaa', upstream: 'origin/main', ahead: 2, behind: 1 },
+      { name: 'main', fullName: 'refs/heads/main', kind: 'local', target: 'aaa', upstream: 'origin/main', upstreamRemote: 'origin', upstreamMerge: 'refs/heads/main', ahead: 2, behind: 1 },
       { name: 'topic', fullName: 'refs/heads/topic', kind: 'local', target: 'bbb' },
       { name: 'origin/main', fullName: 'refs/remotes/origin/main', kind: 'remote', target: 'ccc' },
       { name: 'v1', fullName: 'refs/tags/v1', kind: 'tag', target: 'ddd' },

@@ -28,6 +28,11 @@ describe('classifyChange', () => {
     expect(classifyChange('.gitignore')).toBe('status')
   })
 
+  it('treats a linked worktree index as status and ignores submodule object writes', () => {
+    expect(classifyChange('.git/worktrees/wt/index')).toBe('status')
+    expect(classifyChange('.git/modules/deps/lib/objects/ab/cdef')).toBe('ignore')
+  })
+
   it('understands Windows separators', () => {
     expect(classifyChange('.git\\refs\\heads\\x')).toBe('history')
     expect(classifyChange('.git\\objects\\ab\\cd')).toBe('ignore')

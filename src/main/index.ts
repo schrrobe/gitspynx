@@ -159,8 +159,12 @@ function undoSteps(v: unknown): UndoStep[] {
         return { type: 'reset', expect: str(s.expect), to: str(s.to), mode: s.mode, branch: s.branch === null ? null : str(s.branch) }
       case 'checkout':
         return { type: 'checkout', branch: str(s.branch) }
-      case 'createBranch':
-        return { type: 'createBranch', name: str(s.name), sha: str(s.sha) }
+      case 'createBranch': {
+        const up = s.upstream as Record<string, unknown> | undefined
+        const upstream = up ? { remote: str(up.remote), merge: str(up.merge) } : undefined
+        if (upstream && (/^-|[\s\0]/.test(upstream.remote) || !/^refs\//.test(upstream.merge))) break
+        return { type: 'createBranch', name: str(s.name), sha: str(s.sha), ...(upstream ? { upstream } : {}) }
+      }
       case 'deleteBranch':
         return { type: 'deleteBranch', name: str(s.name), expect: str(s.expect) }
       case 'renameBranch':
@@ -174,6 +178,7 @@ function resolution(v: unknown): Resolution {
   const r = v as Record<string, unknown> | null
   if (r && typeof r.content === 'string') return { content: r.content }
   if (r && (r.side === 'ours' || r.side === 'theirs')) return { side: r.side }
+  if (r && r.delete === true) return { delete: true }
   throw new GitError('invalid argument')
 }
 
@@ -209,9 +214,11 @@ function unwatch() {
 async function watchOpenRepo(path: string, win: Electron.WebContents) {
   if (watched?.path === path) return
   unwatch()
+  const outside = await gitDirsOutside(path)
+  if (watched) return // another open won meanwhile
   const watcher = watchRepo(
     path,
-    await gitDirsOutside(path),
+    outside,
     (kind) => !win.isDestroyed() && win.send('repo:changed', { repo: path, kind } satisfies RepoChange),
     () => watched?.watcher === watcher && unwatch()
   )
@@ -283,7 +290,8 @@ const handlers: Handlers = {
     const snapshot = opened.get(path)!
     // a filter may only narrow the snapshot taken at open
     if (tips !== undefined && !Array.isArray(tips)) throw new GitError('invalid argument')
-    const chosen = tips === undefined ? snapshot : snapshot.filter((t) => tips.includes(t))
+    const wanted = new Set(tips as string[] | undefined)
+    const chosen = tips === undefined ? snapshot : snapshot.filter((t) => wanted.has(t))
     return readLog(path, chosen, int(skip, 1e7), int(limit, MAX_LOG_PAGE))
   },
   readCommit: (_s, repo, sha) => readCommit(knownRepo(repo), str(sha)),

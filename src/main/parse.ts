@@ -10,7 +10,9 @@ export const REF_FORMAT = [
   '%(objectname)',
   '%(*objectname)',
   '%(upstream:short)',
-  '%(upstream:track)'
+  '%(upstream:track)',
+  '%(upstream:remotename)',
+  '%(upstream:remoteref)'
 ].join('%1f')
 
 export function parseLog(out: string): Commit[] {
@@ -33,7 +35,7 @@ export function parseRefs(out: string): Ref[] {
   const refs: Ref[] = []
   for (const line of out.split('\n')) {
     if (!line) continue
-    const [fullName, sha, peeled, upstream, track] = line.split(US)
+    const [fullName, sha, peeled, upstream, track, upstreamRemote, upstreamMerge] = line.split(US)
     if (fullName.endsWith('/HEAD')) continue // symbolic remote HEAD duplicates its target branch
     const match = KINDS.find(([prefix]) => fullName.startsWith(prefix))
     let ref: Ref
@@ -42,6 +44,7 @@ export function parseRefs(out: string): Ref[] {
     else continue // notes, pull-request refs etc. are not shown
     if (upstream) {
       ref.upstream = upstream
+      if (upstreamRemote && upstreamMerge) Object.assign(ref, { upstreamRemote, upstreamMerge }) // raw config, for undoing a delete
       ref.ahead = Number(/ahead (\d+)/.exec(track)?.[1] ?? 0)
       ref.behind = Number(/behind (\d+)/.exec(track)?.[1] ?? 0)
     }

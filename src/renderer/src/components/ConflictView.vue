@@ -18,13 +18,24 @@ const labels = computed(() =>
 )
 const hasMarkers = computed(() => /^(<{7}|\|{7}|={7}|>{7})( |\r?$)/m.test(result.value))
 const binary = computed(() => repo.conflict?.versions.binary ?? false)
+// Modify/delete conflicts: one side removed the file, so deleting is a valid resolution.
+const deletable = computed(() => repo.conflict?.versions.ours === null || repo.conflict?.versions.theirs === null)
+
+async function markResolved() {
+  if (hasMarkers.value && !(await window.gitspynx.confirm('Das Ergebnis enthält noch Konfliktmarker.', 'Trotzdem so als gelöst markieren?', 'Als gelöst markieren')))
+    return
+  await repo.resolve({ content: result.value })
+}
 </script>
 
 <template>
   <section v-if="repo.conflict" class="conflict" aria-label="Konflikt auflösen">
     <header>
       <strong class="mono">{{ repo.conflict.path }}</strong>
-      <button @click="repo.conflict = null">Schließen</button>
+      <span class="actions">
+        <button v-if="deletable" @click="repo.resolve({ delete: true })">Datei löschen</button>
+        <button @click="repo.conflict = null">Schließen</button>
+      </span>
     </header>
     <div class="sides">
       <div class="side">
@@ -47,7 +58,7 @@ const binary = computed(() => repo.conflict?.versions.binary ?? false)
       <div class="label">
         <span>Ergebnis</span>
         <span v-if="hasMarkers" class="warn">enthält noch Konfliktmarker</span>
-        <button class="primary" @click="repo.resolve({ content: result })">Als gelöst markieren</button>
+        <button class="primary" @click="markResolved">Als gelöst markieren</button>
       </div>
       <textarea v-model="result" class="mono" spellcheck="false" aria-label="Aufgelöster Dateiinhalt" />
     </div>
@@ -57,6 +68,7 @@ const binary = computed(() => repo.conflict?.versions.binary ?? false)
 <style scoped>
 .conflict { display: grid; grid-template-rows: auto 1fr 1fr; min-height: 0; }
 header { display: flex; align-items: center; justify-content: space-between; padding: 6px 12px; border-bottom: 1px solid var(--border); }
+.actions { display: flex; gap: 8px; }
 .sides { display: grid; grid-template-columns: 1fr 1fr; min-height: 0; border-bottom: 1px solid var(--border); }
 .side { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
 .side + .side { border-left: 1px solid var(--border); }

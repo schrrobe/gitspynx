@@ -5,8 +5,8 @@ export type ChangeKind = 'ignore' | 'status' | 'history'
 // file is relative to the work tree, as reported by fs.watch (backslashes on Windows).
 export function classifyChange(file: string): ChangeKind {
   const f = file.replaceAll('\\', '/')
-  if (f.startsWith('.git/objects/') || f.endsWith('.lock')) return 'ignore'
-  if (f === '.git/index') return 'status' // staging, or another tool refreshing the index
+  if ((f.startsWith('.git/') && f.includes('/objects/')) || f.endsWith('.lock')) return 'ignore' // incl. submodule git dirs
+  if (/^\.git\/(worktrees\/[^/]+\/)?index$/.test(f)) return 'status' // staging, or a tool refreshing the index
   if (f === '.git' || f.startsWith('.git/')) return 'history'
   return 'status'
 }

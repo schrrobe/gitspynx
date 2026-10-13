@@ -145,6 +145,18 @@ describe('repo store', () => {
       expect(repo.error).toBeNull()
     })
 
+    it('remembers the upstream so undo restores tracking', async () => {
+      const repo = await openedRepo()
+      repo.info!.refs = [{ name: 'x', fullName: 'refs/heads/x', kind: 'local', target: 'c9', upstream: 'origin/x', upstreamRemote: 'origin', upstreamMerge: 'refs/heads/x' }]
+      mockApi([true], false)
+      let undone: unknown[] = []
+      const w = (globalThis as unknown as { window: { gitspynx: Record<string, unknown> } }).window
+      w.gitspynx.applyUndo = async (_r: string, steps: unknown[]) => void (undone = steps)
+      await repo.deleteBranch('x')
+      await repo.undo()
+      expect(undone).toEqual([{ type: 'createBranch', name: 'x', sha: 'c9', upstream: { remote: 'origin', merge: 'refs/heads/x' } }])
+    })
+
     it('keeps the branch when forcing is declined', async () => {
       const repo = await openedRepo()
       const calls = mockApi([true, false], true)
@@ -290,6 +302,13 @@ describe('repo store', () => {
       const { repo, w } = await opened()
       w.gitspynx.merge = async () => 'conflicts'
       await repo.mergeInto('side')
+      expect(repo.selected).toBe(WIP)
+    })
+
+    it('shows the working directory when a pull stops on conflicts', async () => {
+      const { repo, w } = await opened()
+      w.gitspynx.pull = async () => 'conflicts'
+      await repo.pullBranch('merge')
       expect(repo.selected).toBe(WIP)
     })
 

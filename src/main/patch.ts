@@ -44,5 +44,7 @@ export function buildPatch(diff: FileDiff, hunkIndex: number, lines: number[] | 
     }
   })
   if (!changes) throw new Error('no changed lines selected')
-  return [...diff.header, `@@ -${m[1]},${oldCount} +${m[2]},${newCount} @@${m[3]}`, ...body, ''].join('\n')
+  // a partial selection stages content only, not a mode change of the same file
+  const header = lines ? diff.header.filter((h) => !/^(old|new) mode /.test(h)) : diff.header
+  return [...header, `@@ -${m[1]},${oldCount} +${m[2]},${newCount} @@${m[3]}`, ...body, ''].join('\n')
 }

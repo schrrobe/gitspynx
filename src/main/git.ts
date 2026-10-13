@@ -36,14 +36,20 @@ export function run(args: string[], cwd: string, okCodes = [0], stdin?: string, 
     const err: Buffer[] = []
     let size = 0
     let failure: GitError | null = null
+    const signal = (sig: NodeJS.Signals) => {
+      try {
+        if (process.platform === 'win32' && child.pid) spawn('taskkill', ['/pid', String(child.pid), '/T', '/F']) // whole tree
+        else if (child.pid && timeout > 0) process.kill(-child.pid, sig)
+        else child.kill(sig)
+      } catch {
+        child.kill(sig)
+      }
+    }
+    let hardKill: NodeJS.Timeout | undefined
     const stop = (e: GitError) => {
       failure ??= e
-      try {
-        if (child.pid && timeout > 0 && process.platform !== 'win32') process.kill(-child.pid, 'SIGTERM')
-        else child.kill('SIGTERM')
-      } catch {
-        child.kill('SIGTERM')
-      }
+      signal('SIGTERM')
+      hardKill ??= setTimeout(() => signal('SIGKILL'), 3000) // for processes that ignore SIGTERM
     }
     const timer = timeout > 0 ? setTimeout(() => stop(new GitError(`git ${args[0]} timed out after ${timeout / 1000}s`)), timeout) : undefined
     child.stdout.on('data', (d: Buffer) => {
@@ -51,13 +57,18 @@ export function run(args: string[], cwd: string, okCodes = [0], stdin?: string, 
       if (size > MAX_OUTPUT) stop(new GitError(`git ${args[0]} output too large`))
       else out.push(d)
     })
-    child.stderr.on('data', (d: Buffer) => err.push(d))
+    let errSize = 0
+    child.stderr.on('data', (d: Buffer) => {
+      errSize += d.length
+      if (errSize <= 1024 * 1024) err.push(d) // enough for any message; progress spam is dropped
+    })
     child.on('error', (e: NodeJS.ErrnoException) => {
       clearTimeout(timer)
       reject(new GitError(e.code === 'ENOENT' ? 'git executable not found — is git installed?' : e.message))
     })
     child.on('close', (code) => {
       clearTimeout(timer)
+      clearTimeout(hardKill)
       const stderr = Buffer.concat(err).toString()
       if (failure) return reject(new GitError(failure.message, code, stderr))
       const exit = code ?? -1
@@ -229,13 +240,16 @@ export type PullMode = 'ff-only' | 'rebase' | 'merge'
 
 // Fetch (network, time-limited) then integrate locally without a timer, so a slow merge or
 // rebase is never killed halfway.
-export async function pull(repo: string, mode: PullMode): Promise<void> {
+export async function pull(repo: string, mode: PullMode): Promise<'ok' | 'conflicts'> {
   const upstream = await run(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'], repo, [0, 128])
   if (upstream.code !== 0) throw new GitError('the current branch has no upstream branch')
   await run(['fetch', '--quiet'], repo, [0], undefined, NETWORK_TIMEOUT)
   // No explicit upstream argument: git then uses it with --fork-point, exactly like `git pull`.
-  const integrate = { 'ff-only': ['merge', '--ff-only'], rebase: ['rebase'], merge: ['merge', '--no-edit'] }[mode]
-  await run(integrate, repo)
+  // A merge pull honours pull.ff like `git pull` does.
+  const pullFf = await config(repo, 'pull.ff')
+  const ff = pullFf === 'only' ? ['--ff-only'] : pullFf === 'false' ? ['--no-ff'] : []
+  const integrate = { 'ff-only': ['merge', '--ff-only'], rebase: ['rebase'], merge: ['merge', '--no-edit', ...ff] }[mode]
+  return mayConflict(repo, integrate)
 }
 
 async function remotes(repo: string): Promise<string[]> {
@@ -400,6 +414,10 @@ export async function readConflict(repo: string, path: string): Promise<Conflict
 
 export async function resolveConflict(repo: string, path: string, resolution: Resolution): Promise<void> {
   const full = await conflictedFile(repo, path)
+  if ('delete' in resolution) {
+    await run([LITERAL, 'rm', '-q', '--', path], repo)
+    return
+  }
   if ('content' in resolution) {
     const st = await lstat(full).catch(() => null)
     if (st?.isSymbolicLink()) throw new GitError(`refusing to write through a symlink: ${path}`)
@@ -427,13 +445,25 @@ async function stashRef(repo: string, sha: string): Promise<string> {
 }
 
 // Stashes tracked and untracked changes (git's "WIP on <branch>" message when empty).
+// "Nothing to stash" is decided by git itself (refs/stash unchanged), not by a status check that
+// misses e.g. untracked files hidden by status.showUntrackedFiles=no.
 export async function stashPush(repo: string, message: string): Promise<void> {
-  if (!(await run(['status', '--porcelain'], repo)).stdout) throw new GitError('nothing to stash')
+  const top = async () => (await run(['rev-parse', '-q', '--verify', 'refs/stash'], repo, [0, 1])).stdout.trim()
+  const before = await top()
   await run(['stash', 'push', '--include-untracked', ...(message ? [`--message=${message}`] : [])], repo)
+  if ((await top()) === before) throw new GitError('nothing to stash')
 }
 
+// --index restores what was staged; git refuses it when the index would conflict, then the
+// changes are applied without restoring the staging.
 export async function stashApply(repo: string, sha: string, pop: boolean): Promise<'ok' | 'conflicts'> {
-  return mayConflict(repo, ['stash', pop ? 'pop' : 'apply', await stashRef(repo, sha)])
+  const ref = await stashRef(repo, sha)
+  try {
+    return await mayConflict(repo, ['stash', pop ? 'pop' : 'apply', '--index', ref])
+  } catch (e) {
+    if (!/without --index|Conflicts in index/.test(String(e))) throw e
+    return mayConflict(repo, ['stash', pop ? 'pop' : 'apply', ref])
+  }
 }
 
 export async function stashDrop(repo: string, sha: string): Promise<void> {
@@ -457,6 +487,9 @@ export async function stageHunk(repo: string, sel: HunkSelection): Promise<void>
   const hunk = diff.hunks[sel.hunk]
   if (!hunk || hunk.header !== sel.hunkHeader || hunkKey(hunk) !== sel.hunkLines)
     throw new GitError('the diff changed meanwhile — please review it again')
+  const changed = hunk.lines.filter((l) => l.type !== ' ').map((l) => l.text)
+  if (changed.length && changed.every((t) => /^Subproject commit [0-9a-f]+(-dirty)?$/.test(t)) && new Set(changed.map((t) => t.replace(/-dirty$/, ''))).size === 1)
+    throw new GitError('nothing to stage: the change is uncommitted work inside the submodule — commit it there first')
   if (sel.lines && diff.header.some((h) => /^(new|deleted) file mode/.test(h)))
     throw new GitError('added or deleted files can only be staged as a whole')
   let patch: string
@@ -499,6 +532,8 @@ export async function interactiveRebase(repo: string, base: string, steps: Rebas
     throw new GitError('the first commit cannot be squashed or fixed up into a previous one')
   if (steps.some((s) => s.action === 'reword' && !s.message?.trim())) throw new GitError('reword needs a commit message')
 
+  const op = await currentOperation(repo)
+  if (op) throw new GitError(`a ${op} is in progress — finish or abort it first`)
   const dir = resolve(repo, (await run(['rev-parse', '--git-path', 'gitspynx-rebase'], repo)).stdout.trim())
   await rm(dir, { recursive: true, force: true })
   await mkdir(dir, { recursive: true })
@@ -516,13 +551,30 @@ export async function interactiveRebase(repo: string, base: string, steps: Rebas
   await writeFile(todoFile, todo.join('\n') + '\n')
   // GIT_SEQUENCE_EDITOR (env) wins over any configured or inherited editor; a failed exec
   // (e.g. a commit-msg hook rejecting the new message) is rescheduled instead of lost.
-  return mayConflict(repo, ['rebase', '-i', '--reschedule-failed-exec', base], { GIT_SEQUENCE_EDITOR: `cp ${shellQuote(todoFile)}` })
+  const result = await mayConflict(repo, ['rebase', '-i', '--reschedule-failed-exec', base], { GIT_SEQUENCE_EDITOR: `cp ${shellQuote(todoFile)}` })
+  if (result === 'ok') await rm(dir, { recursive: true, force: true }) // still needed while stopped
+  return result
 }
 
 // ---- undo / redo ----
 
 // Executes the steps of an undo or redo in order. Every step first checks that the repository is
 // still in the state the recorded action left it in; otherwise nothing more is changed.
+// Everything that can be checked before the first step runs, so a multi-step entry is not left
+// half applied (e.g. switched branch, then refused to delete the moved branch).
+async function precheckUndo(repo: string, steps: UndoStep[]): Promise<void> {
+  const gone = () => new GitError('the repository changed since this action — it cannot be undone')
+  for (const [i, step] of steps.entries()) {
+    if (step.type === 'deleteBranch') {
+      const at = (await run(['rev-parse', '-q', '--verify', `refs/heads/${step.name}`], repo, [0, 1])).stdout.trim()
+      if (at !== step.expect) throw gone()
+    } else if (step.type === 'reset' && i === 0) {
+      const head = await readHead(repo)
+      if (head.sha !== step.expect || head.branch !== step.branch) throw gone()
+    }
+  }
+}
+
 // HEAD as git sees it now (the renderer's view may lag behind a reload).
 export async function readHead(repo: string): Promise<{ sha: string | null; branch: string | null }> {
   const [sha, branch] = await Promise.all([
@@ -537,6 +589,7 @@ export async function readHead(repo: string): Promise<{ sha: string | null; bran
 export async function applyUndo(repo: string, steps: UndoStep[]): Promise<void> {
   const op = await currentOperation(repo)
   if (op) throw new GitError(`a ${op} is in progress — finish or abort it first`)
+  await precheckUndo(repo, steps)
   for (const step of steps) {
     switch (step.type) {
       case 'reset': {
@@ -557,6 +610,10 @@ export async function applyUndo(repo: string, steps: UndoStep[]): Promise<void> 
         await assertBranchName(repo, step.name)
         assertRevision(step.sha)
         await run(['branch', step.name, step.sha], repo)
+        if (step.upstream) {
+          await run(['config', `branch.${step.name}.remote`, step.upstream.remote], repo)
+          await run(['config', `branch.${step.name}.merge`, step.upstream.merge], repo)
+        }
         break
       case 'deleteBranch': {
         await assertBranchName(repo, step.name)
@@ -608,6 +665,8 @@ export async function pruneWorktrees(repo: string): Promise<void> {
 // From the index (cheap: no per-submodule `git describe` like `submodule status`): gitlinks are
 // mode 160000; initialized = has a .git; modified = checked-out commit differs from the recorded one.
 export async function listSubmodules(repo: string): Promise<Submodule[]> {
+  // ponytail: no .gitmodules → skip reading the whole index; embedded repos without a mapping are then not listed
+  if (!existsSync(join(repo, '.gitmodules'))) return []
   const [index, changed] = await Promise.all([
     run(['ls-files', '-s', '-z'], repo),
     run(['diff-files', '--ignore-submodules=dirty', '--name-only', '-z'], repo)

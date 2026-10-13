@@ -170,6 +170,12 @@ describe('git backend', () => {
     await expect(run(['status'], join(dir, 'does-not-exist'))).rejects.toThrow(/folder not found/)
   })
 
+  it('escalates to SIGKILL when git ignores the timeout signal', async () => {
+    const t0 = Date.now()
+    await expect(run(['-c', 'alias.stubborn=!trap "" TERM; sleep 30', 'stubborn'], dir, [0], undefined, 300)).rejects.toThrow(/timed out/)
+    expect(Date.now() - t0).toBeLessThan(8000)
+  }, 15_000)
+
   it('kills the whole process tree on timeout', async () => {
     const marker = `sleep 7.${process.pid}`
     await expect(run(['-c', `alias.hang=!${marker}; true`, 'hang'], dir, [0], undefined, 300)).rejects.toThrow(/timed out/)
@@ -395,6 +401,33 @@ describe('remotes', () => {
     expect(isRejectedPush(err)).toBe(true)
     await push(a, true)
     expect(at(remote, 'log', '-1', '--format=%s', 'topic')).toBe('topic work rewritten')
+  })
+
+  it('honours pull.ff=false for merge pulls', async () => {
+    at(a, 'switch', '-q', 'main')
+    at(a, 'pull', '-q', '--rebase')
+    at(b, 'pull', '-q', '--rebase')
+    at(b, 'commit', '-q', '--allow-empty', '-m', 'ff-able')
+    at(b, 'push', '-q')
+    at(a, 'config', 'pull.ff', 'false')
+    await pull(a, 'merge')
+    expect(at(a, 'log', '-1', '--format=%P').split(' ')).toHaveLength(2) // a merge commit, as configured
+    at(a, 'config', '--unset', 'pull.ff')
+    at(a, 'reset', '-q', '--hard', 'origin/main')
+  })
+
+  it('reports conflicts of a pull instead of failing', async () => {
+    at(a, 'switch', '-q', 'main')
+    writeFileSync(join(b, 'clash.txt'), 'b\n')
+    at(b, 'add', '.')
+    at(b, 'commit', '-q', '-m', 'b clash')
+    at(b, 'push', '-q')
+    writeFileSync(join(a, 'clash.txt'), 'a\n')
+    at(a, 'add', '.')
+    at(a, 'commit', '-q', '-m', 'a clash')
+    expect(await pull(a, 'merge')).toBe('conflicts')
+    at(a, 'merge', '--abort')
+    at(a, 'reset', '-q', '--hard', 'origin/main')
   })
 
   it('refuses ff-only pull when histories diverged', async () => {
@@ -1205,6 +1238,13 @@ describe('submodules', () => {
     expect(readFileSync(out, 'utf8').trim()).toBe('unset')
   })
 
+  it('refuses to stage a submodule whose only change is uncommitted work inside it', async () => {
+    writeFileSync(join(clone, 'deps', 'lib', 'lib.txt'), 'dirty inside\n')
+    const d = await readFileDiff(clone, { path: 'deps/lib', staged: false })
+    await expect(stageHunk(clone, { path: 'deps/lib', staged: false, hunk: 0, hunkHeader: d.hunks[0].header, hunkLines: hunkKey(d.hunks[0]) })).rejects.toThrow(/inside the submodule/)
+    at(join(clone, 'deps', 'lib'), 'checkout', '--', 'lib.txt')
+  })
+
   it('returns no submodules for a repository without any', async () => {
     expect(await listSubmodules(join(root, 'lib'))).toEqual([])
   })
@@ -1275,5 +1315,105 @@ describe.skipIf(!hasLfs)('lfs', () => {
     expect(readFileSync(join(hooked, '.gitattributes'), 'utf8')).toContain('*.psd filter=lfs')
     expect(readFileSync(join(hooked, '.git', 'hooks', 'pre-push'), 'utf8')).toContain('echo mine') // left alone
     rmSync(hooked, { recursive: true })
+  })
+})
+
+describe('deferred fixes: backend', () => {
+  let dd: string
+  const d = (...args: string[]) => execFileSync('git', args, { cwd: dd, env }).toString().trim()
+  beforeEach(() => {
+    dd = realpathSync(mkdtempSync(join(tmpdir(), 'gitspynx-def-')))
+    d('init', '-q', '-b', 'main')
+    writeFileSync(join(dd, 'a.txt'), '1\n')
+    d('add', '.')
+    d('commit', '-q', '-m', 'one')
+  })
+  afterEach(() => rmSync(dd, { recursive: true, force: true }))
+
+  it('restores the staged state when applying a stash', async () => {
+    writeFileSync(join(dd, 'a.txt'), '2\n')
+    d('add', 'a.txt')
+    await stashPush(dd, 'staged')
+    const [st] = await listStashes(dd)
+    await stashApply(dd, st.sha, true)
+    expect(d('diff', '--cached', '--name-only')).toBe('a.txt')
+  })
+
+  it('stashes untracked files even when status hides them', async () => {
+    d('config', 'status.showUntrackedFiles', 'no')
+    writeFileSync(join(dd, 'only-untracked.txt'), 'x')
+    await stashPush(dd, '')
+    expect(await listStashes(dd)).toHaveLength(1)
+  })
+
+  it('explains a stash that collides with an existing untracked file', async () => {
+    writeFileSync(join(dd, 'u.txt'), 'stashed\n')
+    await stashPush(dd, '')
+    writeFileSync(join(dd, 'u.txt'), 'in the way\n')
+    const [st] = await listStashes(dd)
+    await expect(stashApply(dd, st.sha, false)).rejects.toThrow(/already exist/)
+  })
+
+  it('does not stage a mode change together with selected lines', async () => {
+    writeFileSync(join(dd, 'a.txt'), '1\nadded\n')
+    execFileSync('chmod', ['+x', join(dd, 'a.txt')])
+    const diff = await readFileDiff(dd, { path: 'a.txt', staged: false })
+    const idx = diff.hunks[0].lines.findIndex((l) => l.text === 'added')
+    await stageHunk(dd, { path: 'a.txt', staged: false, hunk: 0, hunkHeader: diff.hunks[0].header, hunkLines: hunkKey(diff.hunks[0]), lines: [idx] })
+    expect(d('diff', '--cached', '--summary')).not.toContain('mode change')
+    expect(d('show', ':a.txt')).toBe('1\nadded')
+  })
+
+  it('merges and rebases by full ref name when a tag has the same name as a branch', async () => {
+    d('switch', '-q', '-c', 'twin')
+    d('commit', '-q', '--allow-empty', '-m', 'on branch twin')
+    d('switch', '-q', 'main')
+    d('tag', 'twin', 'HEAD') // tag "twin" points at main's commit
+    expect(await merge(dd, 'refs/heads/twin')).toBe('ok')
+    expect(d('log', '-1', '--format=%s')).toBe('on branch twin')
+  })
+
+  it('checks every step of a multi-step undo before changing anything', async () => {
+    d('switch', '-q', '-c', 'feature')
+    const tip = d('rev-parse', 'HEAD')
+    d('commit', '-q', '--allow-empty', '-m', 'moved on')
+    await expect(applyUndo(dd, [{ type: 'checkout', branch: 'main' }, { type: 'deleteBranch', name: 'feature', expect: tip }])).rejects.toThrow(/cannot be undone/)
+    expect(d('branch', '--show-current')).toBe('feature') // the checkout did not run
+  })
+
+  it('restores the upstream when recreating a deleted branch', async () => {
+    await applyUndo(dd, [{ type: 'createBranch', name: 'back', sha: d('rev-parse', 'HEAD'), upstream: { remote: 'origin', merge: 'refs/heads/back' } }])
+    expect(d('config', '--get', 'branch.back.remote')).toBe('origin')
+    expect(d('config', '--get', 'branch.back.merge')).toBe('refs/heads/back')
+  })
+
+  it('resolves a conflict by deleting the file', async () => {
+    d('switch', '-q', '-c', 'del')
+    d('rm', '-q', 'a.txt')
+    d('commit', '-q', '-m', 'delete a')
+    d('switch', '-q', 'main')
+    writeFileSync(join(dd, 'a.txt'), 'changed\n')
+    d('commit', '-q', '-am', 'change a')
+    expect(await merge(dd, 'del')).toBe('conflicts')
+    await resolveConflict(dd, 'a.txt', { delete: true })
+    expect(existsSync(join(dd, 'a.txt'))).toBe(false)
+    expect(d('ls-files', '-u')).toBe('')
+    await abortOperation(dd)
+  })
+
+  it('leaves no interactive-rebase files behind after a finished rebase', async () => {
+    d('commit', '-q', '--allow-empty', '-m', 'two')
+    const base = d('rev-parse', 'HEAD~1')
+    await interactiveRebase(dd, base, [{ sha: d('rev-parse', 'HEAD'), action: 'reword', message: 'two, reworded' }])
+    expect(existsSync(join(dd, '.git', 'gitspynx-rebase'))).toBe(false)
+  })
+
+  it('does not touch rebase files when a rebase is already running', async () => {
+    mkdirSync(join(dd, '.git', 'gitspynx-rebase'), { recursive: true })
+    writeFileSync(join(dd, '.git', 'gitspynx-rebase', 'message-0'), 'keep me')
+    mkdirSync(join(dd, '.git', 'rebase-merge'), { recursive: true }) // looks like a rebase in progress
+    await expect(interactiveRebase(dd, d('rev-parse', 'HEAD'), [])).rejects.toThrow(/in progress/)
+    expect(readFileSync(join(dd, '.git', 'gitspynx-rebase', 'message-0'), 'utf8')).toBe('keep me')
+    rmSync(join(dd, '.git', 'rebase-merge'), { recursive: true })
   })
 })

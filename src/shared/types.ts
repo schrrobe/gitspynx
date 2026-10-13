@@ -18,6 +18,8 @@ export interface Ref {
   kind: 'local' | 'remote' | 'tag' | 'stash'
   target: string // commit sha (annotated tags are peeled)
   upstream?: string
+  upstreamRemote?: string // branch.<name>.remote
+  upstreamMerge?: string // branch.<name>.merge
   ahead?: number
   behind?: number
 }
@@ -78,7 +80,7 @@ export interface ConflictVersions {
   binary: boolean // resolve by choosing a side only
 }
 
-export type Resolution = { content: string } | { side: 'ours' | 'theirs' }
+export type Resolution = { content: string } | { side: 'ours' | 'theirs' } | { delete: true }
 
 // Everything the preload exposes as window.gitspynx.
 export interface GitspynxApi {
@@ -122,7 +124,7 @@ export interface GitspynxApi {
   renameBranch(repo: string, from: string, to: string): Promise<void>
   deleteBranch(repo: string, name: string, force: boolean): Promise<void>
   fetch(repo: string): Promise<void>
-  pull(repo: string, mode: 'ff-only' | 'rebase' | 'merge'): Promise<void>
+  pull(repo: string, mode: 'ff-only' | 'rebase' | 'merge'): Promise<'ok' | 'conflicts'>
   push(repo: string, force: boolean): Promise<'ok' | 'rejected'> // rejected = remote has commits we don't
   deleteRemoteBranch(repo: string, remoteBranch: string): Promise<void>
   merge(repo: string, rev: string): Promise<'ok' | 'conflicts'>
@@ -218,6 +220,6 @@ export interface RebaseStep {
 export type UndoStep =
   | { type: 'reset'; expect: string; to: string; mode: 'soft' | 'keep'; branch: string | null } // branch: expected checked-out branch
   | { type: 'checkout'; branch: string }
-  | { type: 'createBranch'; name: string; sha: string }
+  | { type: 'createBranch'; name: string; sha: string; upstream?: { remote: string; merge: string } }
   | { type: 'deleteBranch'; name: string; expect: string }
   | { type: 'renameBranch'; from: string; to: string }
