@@ -2,9 +2,9 @@ import { execFileSync } from 'node:child_process'
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { gitDirsOutside } from './git'
-import { classifyChange, watchRepo } from './watch'
+import { classifyChange, keepWatching, watchRepo } from './watch'
 
 describe('classifyChange', () => {
   it('ignores object writes and lock files', () => {
@@ -69,5 +69,34 @@ describe('watchRepo', () => {
     await until(() => changes.includes('history'))
     watcher.close()
     expect(changes).toContain('history')
+  })
+})
+
+describe('keepWatching', () => {
+  it('restarts a watcher that failed, a few times, and stops when closed', () => {
+    vi.useFakeTimers()
+    try {
+      const fail: (() => void)[] = []
+      let closed = 0
+      keepWatching((onError) => (fail.push(onError), { close: () => void closed++ }), 1000, 2)
+      expect(fail).toHaveLength(1)
+      fail[0]() // e.g. EMFILE
+      expect(closed).toBe(1)
+      vi.advanceTimersByTime(1000)
+      expect(fail).toHaveLength(2) // restarted
+      fail[1]()
+      vi.advanceTimersByTime(1000)
+      expect(fail).toHaveLength(3)
+      fail[2]()
+      vi.advanceTimersByTime(5000)
+      expect(fail).toHaveLength(3) // gave up after two restarts
+      const again = keepWatching((onError) => (fail.push(onError), { close() {} }), 1000, 2)
+      fail[3]()
+      again.close()
+      vi.advanceTimersByTime(5000)
+      expect(fail).toHaveLength(4) // closed meanwhile: no restart
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

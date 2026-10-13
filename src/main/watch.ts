@@ -47,3 +47,28 @@ export function watchRepo(
     }
   }
 }
+
+// A watcher can fail at runtime (EMFILE, the folder briefly gone during a checkout tool's swap):
+// it is started again after a pause, at most `retries` times in a row.
+export function keepWatching(start: (onError: () => void) => RepoWatcher, retryMs = 2000, retries = 5): RepoWatcher {
+  let current: RepoWatcher | null = null
+  let timer: NodeJS.Timeout | undefined
+  let left = retries
+  let closed = false
+  const run = () => {
+    current = start(() => {
+      current?.close()
+      current = null
+      if (closed || left-- <= 0) return
+      timer = setTimeout(run, retryMs)
+    })
+  }
+  run()
+  return {
+    close() {
+      closed = true
+      clearTimeout(timer)
+      current?.close()
+    }
+  }
+}

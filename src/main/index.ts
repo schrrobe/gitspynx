@@ -52,7 +52,7 @@ import { parseSettings, type Settings } from '../shared/settings'
 import { startAskpass } from './askpass'
 import { jsonFile, latestOnly, sessionFile, withoutWorkspace, withTabs, withWorkspace } from './session'
 import { createTerminals, mergePath, shellEnv } from './terminal'
-import { type RepoWatcher, watchRepo } from './watch'
+import { keepWatching, type RepoWatcher, watchRepo } from './watch'
 
 const recentFile = () => join(app.getPath('userData'), 'recent.json')
 let sessionStore: ReturnType<typeof sessionFile> | null = null
@@ -221,11 +221,9 @@ async function watchOpenRepo(path: string, win: Electron.WebContents) {
   const outside = await gitDirsOutside(path)
   if (my !== watchSeq) return // a newer open takes over
   unwatch() // an older open that finished first
-  const watcher = watchRepo(
-    path,
-    outside,
-    (kind) => !win.isDestroyed() && win.send('repo:changed', { repo: path, kind } satisfies RepoChange),
-    () => watched?.watcher === watcher && unwatch()
+  // restarted on its own after a failure (see keepWatching)
+  const watcher = keepWatching((onError) =>
+    watchRepo(path, outside, (kind) => !win.isDestroyed() && win.send('repo:changed', { repo: path, kind } satisfies RepoChange), onError)
   )
   watched = { path, watcher }
 }
