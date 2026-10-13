@@ -17,7 +17,7 @@ watch(promptRequest, async (req) => {
 function finish(result: string | null) {
   const req = promptRequest.value
   promptRequest.value = null
-  req?.resolve(result?.trim() || null)
+  req?.resolve((req.secret ? result : result?.trim()) || null)
 }
 </script>
 
@@ -25,10 +25,10 @@ function finish(result: string | null) {
   <dialog ref="dialog" @cancel.prevent="finish(null)">
     <form method="dialog" @submit.prevent="finish(value)">
       <label for="prompt-input">{{ promptRequest?.title }}</label>
-      <input id="prompt-input" ref="input" v-model="value" autocomplete="off" spellcheck="false" />
+      <input id="prompt-input" ref="input" v-model="value" :type="promptRequest?.secret ? 'password' : 'text'" autocomplete="off" spellcheck="false" />
       <div class="actions">
         <button type="button" @click="finish(null)">Abbrechen</button>
-        <button type="submit" class="primary" :disabled="!value.trim()">{{ promptRequest?.okLabel }}</button>
+        <button type="submit" class="primary" :disabled="promptRequest?.secret ? !value : !value.trim()">{{ promptRequest?.okLabel }}</button>
       </div>
     </form>
   </dialog>

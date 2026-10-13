@@ -22,6 +22,10 @@ const MAX_OUTPUT = 256 * 1024 * 1024
 
 // Runs git without a shell. Exit codes listed in okCodes are returned instead of thrown.
 // A timeout kills git's whole process group (ssh, credential helpers, hooks included).
+// Added to every git call (askpass bridge); set once at start-up.
+let sharedEnv: Record<string, string> = {}
+export const setGitEnv = (env: Record<string, string>) => void (sharedEnv = env)
+
 export function run(args: string[], cwd: string, okCodes = [0], stdin?: string, timeout = 0, env: Record<string, string> = {}): Promise<Result> {
   return new Promise((resolve, reject) => {
     if (!existsSync(cwd)) return reject(new GitError(`folder not found: ${cwd}`))
@@ -30,7 +34,7 @@ export function run(args: string[], cwd: string, okCodes = [0], stdin?: string, 
       detached: timeout > 0 && process.platform !== 'win32', // own process group for the timer
       // English messages for the few checks that match git output; never wait for an editor
       // (continue keeps the prepared message). Hooks inherit only these.
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', LC_MESSAGES: 'C', GIT_EDITOR: 'true', ...env }
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', LC_MESSAGES: 'C', GIT_EDITOR: 'true', ...sharedEnv, ...env }
     })
     const out: Buffer[] = []
     const err: Buffer[] = []

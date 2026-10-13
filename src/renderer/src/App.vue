@@ -17,7 +17,7 @@ import RebaseDialog from './components/RebaseDialog.vue'
 import TabStrip from './components/TabStrip.vue'
 import TerminalPanel from './components/TerminalPanel.vue'
 import WorkdirPanel from './components/WorkdirPanel.vue'
-import { ask } from './prompt'
+import { ask, isSecretPrompt } from './prompt'
 import { useRepo, WIP } from './stores/repo'
 import { useTabs } from './stores/tabs'
 
@@ -62,6 +62,13 @@ const stopWatching = window.gitspynx.onRepoChanged(({ repo: path, kind }) => {
   else repo.refreshStatus()
 })
 onUnmounted(stopWatching)
+
+// git or ssh needs a password, passphrase or confirmation; cancel makes the operation fail
+const stopAskpass = window.gitspynx.onAskpass(async (id, prompt) => {
+  const answer = await ask(prompt.trim(), '', 'OK', isSecretPrompt(prompt))
+  void window.gitspynx.askpassReply(id, answer)
+})
+onUnmounted(stopAskpass)
 
 const headRef = computed(() => repo.info?.refs.find((r) => r.kind === 'local' && r.name === repo.info?.head.branch))
 

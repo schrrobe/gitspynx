@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { GitspynxApi, GitspynxBridge, RepoChange } from '../shared/types'
 
 const methods: (keyof GitspynxApi)[] = [
+  'askpassReply',
   'pickRepo',
   'recentRepos',
   'openRepo',
@@ -78,6 +79,11 @@ const bridge: GitspynxBridge = {
     const listener = (_e: unknown, id: number, code: number) => cb(id, code)
     ipcRenderer.on('terminal:exit', listener)
     return () => ipcRenderer.off('terminal:exit', listener)
+  },
+  onAskpass(cb) {
+    const listener = (_e: unknown, id: number, prompt: string) => cb(id, prompt)
+    ipcRenderer.on('askpass:request', listener)
+    return () => ipcRenderer.off('askpass:request', listener)
   }
 }
 

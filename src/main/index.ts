@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process'
 import { readFile, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { type DiffTarget, type GitspynxApi, type HunkSelection, type RebaseStep, type UndoStep, MAX_LOG_PAGE, type MenuItem, type RepoChange, type Resolution, type Session } from '../shared/types'
-import { assertNewWorktreeBranch,
+import { setGitEnv, assertNewWorktreeBranch,
   abortOperation,
   addWorktree,
   applyUndo,
@@ -49,6 +49,7 @@ import { assertNewWorktreeBranch,
   updateSubmodules
 } from './git'
 import { parseSettings, type Settings } from '../shared/settings'
+import { startAskpass } from './askpass'
 import { jsonFile, latestOnly, sessionFile, withoutWorkspace, withTabs, withWorkspace } from './session'
 import { createTerminals, mergePath, shellEnv } from './terminal'
 import { type RepoWatcher, watchRepo } from './watch'
@@ -244,7 +245,34 @@ async function allowedPath(v: unknown): Promise<string> {
 
 type Handlers = { [K in keyof GitspynxApi]: (sender: Electron.WebContents, ...args: unknown[]) => ReturnType<GitspynxApi[K]> }
 
+// Credential prompts of git/ssh are asked in the focused window; the answer comes back through
+// askpassReply, accepted only from that window.
+const askpassPending = new Map<number, { owner: number; resolve: (answer: string | null) => void }>()
+let askpassSeq = 0
+function askInWindow(prompt: string): Promise<string | null> {
+  const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+  if (!win || win.isDestroyed()) return Promise.resolve(null)
+  const id = ++askpassSeq
+  const contents = win.webContents
+  return new Promise((resolve) => {
+    const gone = () => finish(null)
+    const finish = (answer: string | null) => {
+      askpassPending.delete(id)
+      contents.off('destroyed', gone)
+      resolve(answer)
+    }
+    askpassPending.set(id, { owner: contents.id, resolve: finish })
+    contents.once('destroyed', gone)
+    contents.send('askpass:request', id, prompt)
+  })
+}
+
 const handlers: Handlers = {
+  async askpassReply(sender, id, answer) {
+    const pending = askpassPending.get(int(id, 1e9))
+    if (!pending || pending.owner !== sender.id) return
+    pending.resolve(typeof answer === 'string' && answer.length <= 10_000 ? answer : null)
+  },
   async pickRepo() {
     const res = await dialog.showOpenDialog({ properties: ['openDirectory'] })
     if (res.canceled) return null
@@ -482,6 +510,14 @@ app.whenReady().then(async () => {
   setMenu()
   await adoptLoginShellPath()
   await createWindow()
+  // without it git still works; credentials then come only from helpers and the SSH agent
+  await startAskpass(join(app.getPath('userData'), 'askpass'), process.execPath, askInWindow).then(
+    (askpass) => {
+      setGitEnv(askpass.env)
+      app.once('will-quit', askpass.close) // removes the socket file
+    },
+    (e) => console.error('askpass unavailable:', e)
+  )
   app.on('activate', () => BrowserWindow.getAllWindows().length === 0 && void createWindow())
 })
 app.on('window-all-closed', () => process.platform !== 'darwin' && app.quit())
