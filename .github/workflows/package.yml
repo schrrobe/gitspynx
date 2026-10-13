@@ -1,0 +1,49 @@
+name: Package
+# Builds installers on all three platforms and smoke-tests the packaged app (graph + terminal).
+# Artifacts only; publishing a GitHub release is a manual step for now.
+on:
+  pull_request:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            exe: dist/mac-arm64/gitspynx.app/Contents/MacOS/gitspynx
+          - os: windows-latest
+            exe: dist/win-unpacked/gitspynx.exe
+          - os: ubuntu-latest
+            exe: dist/linux-unpacked/gitspynx
+    runs-on: ${{ matrix.os }}
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false' # unsigned until signing credentials exist
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run dist -- --publish never
+      - name: Smoke test (Linux, virtual display)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a node tools/smoke.cjs ${{ matrix.exe }}
+      - name: Smoke test
+        if: runner.os != 'Linux'
+        run: node tools/smoke.cjs ${{ matrix.exe }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gitspynx-${{ runner.os }}
+          path: |
+            dist/*.dmg
+            dist/*.zip
+            dist/*.exe
+            dist/*.AppImage
+            dist/*.deb
+            smoke-failure.png
+          if-no-files-found: ignore
