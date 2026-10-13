@@ -16,14 +16,16 @@ const tempDir = () => {
 
 // git credential fill asks for username and password through GIT_ASKPASS, without any network.
 // Asynchronous: the askpass server runs in this process and must keep answering.
-function fill(env: Record<string, string>): Promise<{ status: number | null; stdout: string }> {
+function fill(env: Record<string, string>): Promise<{ status: number | null; stdout: string; stderr: string }> {
   const git = spawn('git', ['credential', 'fill'], {
-    env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_GLOBAL: devNull, GIT_CONFIG_NOSYSTEM: '1', ...env }
+    env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_GLOBAL: devNull, GIT_CONFIG_NOSYSTEM: '1', GIT_TRACE: '1', ...env }
   })
   let stdout = ''
+  let stderr = ''
   git.stdout.on('data', (d) => (stdout += d))
+  git.stderr.on('data', (d) => (stderr += d))
   git.stdin.end('protocol=https\nhost=example.com\n\n')
-  return new Promise((resolve) => git.on('close', (status) => resolve({ status, stdout })))
+  return new Promise((resolve) => git.on('close', (status) => resolve({ status, stdout, stderr })))
 }
 
 describe('askpass bridge', () => {
@@ -32,7 +34,7 @@ describe('askpass bridge', () => {
     const askpass = await startAskpass(tempDir(), process.execPath, async (p) => (prompts.push(p), p.startsWith('Username') ? 'ada' : 's3cret'))
     try {
       const out = await fill(askpass.env)
-      expect(out.stdout).toContain('username=ada')
+      expect(out.stdout, out.stderr).toContain('username=ada')
       expect(out.stdout).toContain('password=s3cret')
       expect(prompts[0]).toMatch(/^Username for 'https:\/\/example\.com'/)
       expect(prompts[1]).toMatch(/^Password for 'https:\/\/ada@example\.com'/)
