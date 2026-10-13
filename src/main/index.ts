@@ -140,7 +140,7 @@ function hunkSelection(v: unknown): HunkSelection {
   return { path: str(h.path), staged: h.staged, hunk: int(h.hunk, 100_000), hunkHeader: h.hunkHeader, hunkLines: h.hunkLines, lines }
 }
 
-const ACTIONS = ['pick', 'reword', 'squash', 'fixup', 'drop'] as const
+const ACTIONS = ['pick', 'reword', 'edit', 'squash', 'fixup', 'drop'] as const
 function rebaseSteps(v: unknown): RebaseStep[] {
   if (!Array.isArray(v) || v.length > 10_000) throw new GitError('invalid argument')
   return v.map((x) => {

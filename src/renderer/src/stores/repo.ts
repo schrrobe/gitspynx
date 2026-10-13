@@ -269,6 +269,8 @@ export const useRepo = defineStore('repo', () => {
     }, 'Interaktiver Rebase')
     // a rebase that started and then stopped (hook, empty pick) continues in the operation bar
     if ((accepted || info.value?.operation) && rebasePlan.value === plan) rebasePlan.value = null
+    if (accepted && info.value?.operation === 'rebase' && !error.value && steps.some((s) => s.action === 'edit'))
+      notice.value = 'Rebase angehalten zum Bearbeiten: Änderungen vornehmen (z. B. „Letzten Commit ändern"), dann „Fortsetzen".'
   }
 
   const stageHunk = (sel: Omit<HunkSelection, 'path' | 'staged'>) =>

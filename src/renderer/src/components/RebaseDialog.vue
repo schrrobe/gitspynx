@@ -11,6 +11,7 @@ const rows = ref<{ sha: string; subject: string; action: RebaseAction; message: 
 const ACTIONS: { value: RebaseAction; label: string }[] = [
   { value: 'pick', label: 'Übernehmen' },
   { value: 'reword', label: 'Nachricht ändern' },
+  { value: 'edit', label: 'Bearbeiten (hier anhalten)' },
   { value: 'squash', label: 'Squash (mit vorherigem, Nachrichten zusammen)' },
   { value: 'fixup', label: 'Fixup (mit vorherigem, Nachricht verwerfen)' },
   { value: 'drop', label: 'Verwerfen' }
@@ -25,12 +26,20 @@ watch(
   }
 )
 
-function move(i: number, delta: number) {
-  const j = i + delta
-  if (j < 0 || j >= rows.value.length) return
+function moveTo(from: number, to: number) {
+  if (to < 0 || to >= rows.value.length || from === to) return
   const next = [...rows.value]
-  ;[next[i], next[j]] = [next[j], next[i]]
+  next.splice(to, 0, ...next.splice(from, 1))
   rows.value = next
+}
+const move = (i: number, delta: number) => moveTo(i, i + delta)
+
+// Drag & drop reordering (the ↑/↓ buttons do the same by keyboard).
+const dragFrom = ref<number | null>(null)
+const dragOver = ref<number | null>(null)
+function drop(i: number) {
+  if (dragFrom.value !== null) moveTo(dragFrom.value, i)
+  dragFrom.value = dragOver.value = null
 }
 
 // Same checks main does, shown before starting.
@@ -67,9 +76,20 @@ function cancel() {
       <h2>Interaktiver Rebase</h2>
       <span class="dim">{{ rows.length }} Commits auf {{ repo.rebasePlan?.base.slice(0, 7) }} neu anwenden</span>
     </header>
-    <p class="dim hint">Neuester oben. Squash und Fixup fassen einen Commit mit dem darunter liegenden zusammen.</p>
+    <p class="dim hint">Neuester oben. Zum Umsortieren ziehen oder ↑/↓ nutzen. Squash und Fixup fassen einen Commit mit dem darunter liegenden zusammen; „Bearbeiten" hält danach an.</p>
     <ol>
-      <li v-for="(r, i) in rows" :key="r.sha" :class="{ dropped: r.action === 'drop' }">
+      <li
+        v-for="(r, i) in rows"
+        :key="r.sha"
+        :class="{ dropped: r.action === 'drop', dragging: dragFrom === i, over: dragOver === i && dragFrom !== i }"
+        draggable="true"
+        @dragstart="dragFrom = i"
+        @dragover.prevent="dragOver = i"
+        @dragleave="dragOver === i && (dragOver = null)"
+        @drop.prevent="drop(i)"
+        @dragend="dragFrom = dragOver = null"
+      >
+        <span class="grip" aria-hidden="true" title="Ziehen zum Umsortieren">⠿</span>
         <div class="order">
           <button :disabled="i === 0" :aria-label="`${r.subject} nach oben`" @click="move(i, -1)">↑</button>
           <button :disabled="i === rows.length - 1" :aria-label="`${r.subject} nach unten`" @click="move(i, 1)">↓</button>
@@ -112,6 +132,9 @@ h2 { font-size: 16px; margin: 0; }
 ol { list-style: none; margin: 0; padding: 0; max-height: 55vh; overflow-y: auto; }
 li { display: flex; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--border); }
 li.dropped .subject { text-decoration: line-through; opacity: 0.5; }
+li.dragging { opacity: 0.4; }
+li.over { box-shadow: inset 0 2px 0 var(--accent); }
+.grip { cursor: grab; color: var(--text-dim); padding: 0 2px; }
 .order { display: flex; gap: 2px; }
 .order button { padding: 0 6px; }
 select, textarea {

@@ -667,6 +667,17 @@ describe('repo store', () => {
       expect(repo.error).toBe('push rejected')
     })
 
+    it('explains an edit stop after starting the rebase', async () => {
+      const repo = await opened()
+      w().gitspynx.readHead = async () => ({ sha: 'a0', branch: 'main' })
+      repo.rebasePlan = { base: 'b0', commits: [] }
+      w().gitspynx.interactiveRebase = async () => 'ok'
+      w().gitspynx.openRepo = async () => ({ ...info, operation: 'rebase' }) // stopped at the edit step
+      await repo.startRebase([{ sha: 'c1', action: 'edit' }])
+      expect(repo.rebasePlan).toBeNull()
+      expect(repo.notice).toMatch(/angehalten/i)
+    })
+
     it('keeps the rebase plan open when git refuses it', async () => {
       const repo = await opened()
       w().gitspynx.readHead = async () => ({ sha: 'a0', branch: 'main' })

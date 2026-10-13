@@ -212,7 +212,7 @@ export interface RebaseCommit {
   message: string // full message (subject and body), the starting point for rewording
 }
 
-export type RebaseAction = 'pick' | 'reword' | 'squash' | 'fixup' | 'drop'
+export type RebaseAction = 'pick' | 'reword' | 'edit' | 'squash' | 'fixup' | 'drop'
 
 export interface RebaseStep {
   sha: string

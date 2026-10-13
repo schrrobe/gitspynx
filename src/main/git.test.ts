@@ -970,6 +970,16 @@ describe('interactive rebase', () => {
     }
   })
 
+  it('stops at an edit step, keeps an amend made there and continues', async () => {
+    expect(await interactiveRebase(rd, base, [{ sha: c1, action: 'edit' }, { sha: c2, action: 'pick' }, { sha: c3, action: 'pick' }])).toBe('ok')
+    expect(await currentOperation(rd)).toBe('rebase')
+    expect(r('log', '-1', '--format=%s')).toBe('commit 1')
+    r('commit', '-q', '--amend', '-m', 'commit 1 (edited)')
+    expect(await continueOperation(rd)).toBe('ok')
+    expect(await currentOperation(rd)).toBeNull()
+    expect(r('log', '--format=%s', `${base}..HEAD`).split('\n')).toEqual(['commit 3', 'commit 2', 'commit 1 (edited)'])
+  })
+
   it('reports a rejected reword and does not drop it on continue', async () => {
     writeFileSync(join(rd, '.git', 'hooks', 'commit-msg'), '#!/bin/sh\ngrep -q "^ok:" "$1" || { echo "message must start with ok:" >&2; exit 1; }\n', { mode: 0o755 })
     await expect(interactiveRebase(rd, base, [
