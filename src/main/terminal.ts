@@ -42,7 +42,11 @@ export function createTerminals(spawn: (cwd: string, cols: number, rows: number)
       terms.delete(id)
     },
     killAll(owner: number) {
-      for (const [id, t] of terms) if (t.owner === owner) (t.pty.kill(), terms.delete(id))
+      for (const [id, t] of terms) {
+        if (t.owner !== owner) continue
+        t.pty.kill()
+        terms.delete(id)
+      }
     }
   }
 }

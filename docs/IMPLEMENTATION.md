@@ -27,7 +27,7 @@ Alle Meilensteine **M0–M10** der Roadmap sind umgesetzt (Branch `feat/m0-m1-sc
 - [ ] **2. Windows und Linux** – nur auf macOS getestet
 - [ ] **3. Echte Remotes** – Push/Pull per SSH und HTTPS nur gegen lokale Remotes getestet, nicht gegen GitHub/GitLab
 - [ ] **4. Eigene Passwortabfrage (askpass)** – HTTPS ohne Credential-Helper und SSH-Schlüssel mit Passphrase außerhalb des Agents scheitern mit der git-Meldung
-- [ ] **5. ESLint** – nur `vue-tsc` strict in der CI
+- [x] **5. ESLint** – `npm run lint` (JS/typescript-eslint recommended, Vue essential, keine Formatregeln), läuft in der CI
 
 ### Abweichungen vom Plan
 
@@ -91,7 +91,8 @@ Kurzfassung; jede Entscheidung mit Begründung und Kosten im Ledger (`.superpowe
 npm ci
 npm test            # Vitest: Unit + Integration gegen temporäre git-Repos
 npm run typecheck   # vue-tsc strict
+npm run lint        # ESLint
 npm run build       # electron-vite
 ```
 
-CI (GitHub Actions) führt Tests und Typprüfung bei jedem Push aus. Die E2E-Treiber (Playwright `_electron`) für M1–M10 wurden während der Entwicklung lokal ausgeführt und sind noch nicht Teil des Repos.
+CI (GitHub Actions) führt Tests, Typprüfung und ESLint bei jedem Push aus. Die E2E-Treiber (Playwright `_electron`) für M1–M10 wurden während der Entwicklung lokal ausgeführt und sind noch nicht Teil des Repos.

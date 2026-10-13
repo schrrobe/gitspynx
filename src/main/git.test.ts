@@ -1203,7 +1203,10 @@ describe('submodules', () => {
     at(root, 'clone', '-q', sup, clone)
   })
   afterAll(() => {
-    for (const [k, v] of Object.entries(saved)) (v === undefined ? delete process.env[k] : (process.env[k] = v))
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k]
+      else process.env[k] = v
+    }
     rmSync(root, { recursive: true, force: true })
   })
 

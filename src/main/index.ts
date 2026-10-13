@@ -64,6 +64,7 @@ const shell = process.platform === 'win32' ? (process.env.COMSPEC ?? 'powershell
 let ptyModule: typeof import('node-pty') | null = null
 const terminals = createTerminals(
   (cwd, cols, rows) => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports -- loaded lazily: native module, only needed once a terminal opens
     ptyModule ??= require('node-pty') as typeof import('node-pty')
     const env = shellEnv(process.env, app.getAppPath(), process.platform)
     return ptyModule.spawn(shell, process.platform === 'win32' ? [] : ['-l'], { name: 'xterm-256color', cwd, cols, rows, env })

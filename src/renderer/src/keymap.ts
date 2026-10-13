@@ -41,7 +41,7 @@ export function comboFromEvent(e: KeyLike, mac = isMac): string | null {
   if (MODIFIER_KEYS.has(e.key)) return null
   // Non-Latin layouts (e.g. Cyrillic) report their own letters; use the physical key instead.
   // Dead keys (` on many European layouts) report "Dead"; the physical key still identifies them.
-  const physical = (e.key === 'Dead' || /[^\x00-\x7f]/.test(e.key)) && /^(?:Key([A-Z])|Digit(\d)|(Backquote))$/.exec(e.code ?? '')
+  const physical = (e.key === 'Dead' || [...e.key].some((c) => c.charCodeAt(0) > 0x7f)) && /^(?:Key([A-Z])|Digit(\d)|(Backquote))$/.exec(e.code ?? '')
   const key = physical ? (physical[1] ?? physical[2] ?? '`') : keyName(e.key)
   if (!key) return null
   // AltGr (Windows/Linux) arrives as Ctrl+Alt; the character it typed is the key.
@@ -61,7 +61,7 @@ export function normalizeCombo(text: string, mac = isMac): string | null {
   const mods = { mod: false, ctrl: false, alt: false, shift: false }
   for (const p of parts.map((x) => x.toLowerCase())) {
     if (['mod', 'cmd', 'command', 'meta'].includes(p)) mods.mod = true
-    else if (['ctrl', 'control'].includes(p)) mac ? (mods.ctrl = true) : (mods.mod = true)
+    else if (['ctrl', 'control'].includes(p)) mods[mac ? 'ctrl' : 'mod'] = true
     else if (['alt', 'option', 'opt'].includes(p)) mods.alt = true
     else if (p === 'shift') mods.shift = true
     else return null
