@@ -1346,6 +1346,79 @@ describe.skipIf(!hasLfs)('lfs', () => {
   })
 })
 
+describe('open points 8–12', () => {
+  let od: string
+  const o = (...args: string[]) => execFileSync('git', args, { cwd: od, env }).toString().trim()
+  beforeEach(() => {
+    od = realpathSync.native(mkdtempSync(join(tmpdir(), 'gitspynx-open-')))
+    o('init', '-q', '-b', 'main')
+    writeFileSync(join(od, 'a.txt'), '1\n')
+    o('add', '.')
+    o('commit', '-q', '-m', 'one')
+  })
+  afterEach(() => rmSync(od, { recursive: true, force: true }))
+
+  it('keeps the base of a stash in the history when no branch reaches it any more', async () => {
+    o('switch', '-q', '-c', 'tmp')
+    o('commit', '-q', '--allow-empty', '-m', 'only on tmp')
+    const base = o('rev-parse', 'HEAD')
+    writeFileSync(join(od, 'a.txt'), 'wip\n')
+    o('stash', 'push', '-q', '-m', 'wip')
+    o('switch', '-q', 'main')
+    o('branch', '-q', '-D', 'tmp')
+    const info = await openRepo(od)
+    const log = await readLog(od, info.tips, 0, 100)
+    expect(log.map((c) => c.sha)).toContain(base)
+  })
+
+  it('keeps unrelated staged changes when a merge is undone (reset --keep)', async () => {
+    const before = o('rev-parse', 'HEAD')
+    o('switch', '-q', '-c', 'side')
+    writeFileSync(join(od, 'side.txt'), 'side\n')
+    o('add', '.')
+    o('commit', '-q', '-m', 'side')
+    o('switch', '-q', 'main')
+    o('merge', '-q', '--no-ff', '--no-edit', 'side')
+    const merged = o('rev-parse', 'HEAD')
+    writeFileSync(join(od, 'staged.txt'), 'staged\n')
+    o('add', 'staged.txt')
+    await applyUndo(od, [{ type: 'reset', expect: merged, to: before, mode: 'keep', branch: 'main' }])
+    expect(o('rev-parse', 'HEAD')).toBe(before)
+    expect(o('diff', '--cached', '--name-only')).toBe('staged.txt')
+  })
+
+  it('keeps branches pointing into the rebased range up to date with rebase.updateRefs', async () => {
+    const base = o('rev-parse', 'HEAD')
+    o('commit', '-q', '--allow-empty', '-m', 'c1')
+    o('branch', 'stacked')
+    o('commit', '-q', '--allow-empty', '-m', 'c2')
+    o('config', 'rebase.updateRefs', 'true')
+    const [c1, c2] = [o('rev-parse', 'HEAD~1'), o('rev-parse', 'HEAD')]
+    await interactiveRebase(od, base, [
+      { sha: c1, action: 'reword', message: 'c1 renamed' },
+      { sha: c2, action: 'pick' }
+    ])
+    expect(o('log', '-1', '--format=%s', 'stacked')).toBe('c1 renamed')
+    expect(o('rev-parse', 'stacked')).toBe(o('rev-parse', 'HEAD~1'))
+  })
+
+  it('reports submodules that git skips because of update = none', async () => {
+    const lib = join(od, '..', `${basename(od)}-lib`)
+    mkdirSync(lib)
+    try {
+      execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: lib, env })
+      execFileSync('git', ['commit', '-q', '--allow-empty', '-m', 'lib'], { cwd: lib, env })
+      o('-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', lib, 'deps/lib')
+      o('config', '-f', '.gitmodules', 'submodule.deps/lib.update', 'none')
+      o('commit', '-q', '-am', 'add lib')
+      const skipped = await updateSubmodules(od, ['deps/lib'])
+      expect(skipped).toEqual(['deps/lib'])
+    } finally {
+      rmSync(lib, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('deferred fixes: backend', () => {
   let dd: string
   const d = (...args: string[]) => execFileSync('git', args, { cwd: dd, env }).toString().trim()

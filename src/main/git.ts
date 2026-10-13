@@ -16,6 +16,7 @@ export class GitError extends Error {
 interface Result {
   code: number
   stdout: string
+  stderr: string
 }
 
 const MAX_OUTPUT = 256 * 1024 * 1024
@@ -78,7 +79,7 @@ export function run(args: string[], cwd: string, okCodes = [0], stdin?: string, 
       const stderr = Buffer.concat(err).toString()
       if (failure) return reject(new GitError(failure.message, code, stderr))
       const exit = code ?? -1
-      if (okCodes.includes(exit)) return resolve({ code: exit, stdout: Buffer.concat(out).toString() })
+      if (okCodes.includes(exit)) return resolve({ code: exit, stdout: Buffer.concat(out).toString(), stderr })
       const message = /git-lfs[^\n]*(command )?not found|'lfs' is not a git command/.test(stderr)
         ? 'git-lfs was not found on the app\'s PATH — install Git LFS or make it available to GUI apps'
         : stderr.trim() || `git ${args[0]} failed (${exit})`
@@ -125,8 +126,6 @@ export async function openRepo(dir: string): Promise<RepoInfo> {
   ])
   const refs = parseRefs(refsOut.stdout)
   const head = { branch: branch.stdout.trim() || null, sha: sha.stdout.trim() || null }
-  // Stashes are listed separately; their internal index/untracked commits are not history.
-  const tips = [...new Set([...(head.sha ? [head.sha] : []), ...refs.filter((r) => r.kind !== 'stash').map((r) => r.target)])]
   // A broken work tree entry must not keep the repository from opening.
   const [operation, stashes, worktrees, submodules] = await Promise.all([
     currentOperation(path),
@@ -135,6 +134,10 @@ export async function openRepo(dir: string): Promise<RepoInfo> {
     listSubmodules(path).catch(() => []) // e.g. a broken .gitmodules must not block opening
   ])
   const lfs = (await lfsPatterns(path)).length ? await lfsInfo(path).catch(() => null) : null
+  // Stashes are listed separately; their internal index/untracked commits are not history, but
+  // the commit a stash was made on is, even when no branch reaches it any more.
+  const stashBases = stashes.map((s) => s.parents[0]).filter(Boolean)
+  const tips = [...new Set([...(head.sha ? [head.sha] : []), ...refs.filter((r) => r.kind !== 'stash').map((r) => r.target), ...stashBases])]
   return { path, head, refs, tips, operation, stashes, worktrees, submodules, lfs }
 }
 
@@ -567,6 +570,20 @@ export async function interactiveRebase(repo: string, base: string, steps: Rebas
     await writeFile(msg, s.message!.trim() + '\n')
     todo.push(`pick ${s.sha}`, `exec git commit --amend --only --allow-empty --quiet -F ${shellQuote(msg)}`)
   }
+  // Our todo replaces git's, which with rebase.updateRefs would move other branches pointing into
+  // the range along; add those update-ref lines the same way (not the current branch, not
+  // branches checked out in another work tree).
+  if ((await run(['config', '--type=bool', '--get', 'rebase.updateRefs'], repo, [0, 1])).stdout.trim() === 'true') {
+    const head = await readHead(repo)
+    const busy = new Set((await listWorktrees(repo).catch(() => [])).map((t) => t.branch))
+    const local = parseRefs((await run(['for-each-ref', `--format=${REF_FORMAT}`, 'refs/heads'], repo)).stdout)
+    for (const [i, s] of [...steps.entries()].reverse()) {
+      const at = todo.findIndex((l) => l.endsWith(` ${s.sha}`)) // the step's first line
+      const end = at + (steps[i].action === 'reword' ? 2 : 1)
+      const moved = local.filter((r) => r.target === s.sha && r.name !== head.branch && !busy.has(r.name))
+      todo.splice(end, 0, ...moved.map((r) => `update-ref ${r.fullName}`))
+    }
+  }
   const todoFile = join(dir, 'todo')
   await writeFile(todoFile, todo.join('\n') + '\n')
   // GIT_SEQUENCE_EDITOR (env) wins over any configured or inherited editor; a failed exec
@@ -620,7 +637,14 @@ export async function applyUndo(repo: string, steps: UndoStep[]): Promise<void> 
           throw new GitError('the repository changed since this action — it cannot be undone')
         // soft: keep the undone commit's changes staged; keep: like reset --hard but refuses to
         // touch files with local changes
-        await run(['reset', step.mode === 'soft' ? '--soft' : '--keep', step.to], repo)
+        if (step.mode === 'soft') await run(['reset', '--soft', step.to], repo)
+        else {
+          // --keep resets the whole index; staged changes to other files go back in afterwards
+          // (--keep refuses when a staged file differs between the two commits, so they apply)
+          const staged = (await run(['diff', '--cached', '--binary'], repo)).stdout
+          await run(['reset', '--keep', step.to], repo)
+          if (staged) await run(['apply', '--cached', '--binary'], repo, [0], staged)
+        }
         break
       }
       case 'checkout':
@@ -720,12 +744,14 @@ export async function listSubmodules(repo: string): Promise<Submodule[]> {
 // :(literal) pathspecs (a global --literal-pathspecs would leak into submodule hooks). No
 // wall-clock limit (an initial clone can take long); HTTP transfers that stall are aborted.
 // ponytail: an SSH transfer that stalls is only stopped by the 30 min backstop
-export async function updateSubmodules(repo: string, paths: string[]): Promise<void> {
+// Resolves to the submodules git skipped (update = none in .gitmodules or the local config).
+export async function updateSubmodules(repo: string, paths: string[]): Promise<string[]> {
   const stall = ['-c', 'http.lowSpeedLimit=1000', '-c', 'http.lowSpeedTime=60']
   const args = paths.length
     ? [...stall, 'submodule', 'update', '--init', '--recursive', '--', ...paths.map((p) => `:(literal)${p}`)]
     : [...stall, 'submodule', 'update', '--recursive']
-  await run(args, repo, [0], undefined, 30 * 60_000)
+  const result = await run(args, repo, [0], undefined, 30 * 60_000)
+  return [...result.stderr.matchAll(/^Skipping submodule '(.+)'$/gm)].map((m) => m[1])
 }
 
 // ---- Git LFS ----

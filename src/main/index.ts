@@ -380,7 +380,7 @@ const handlers: Handlers = {
     const known = new Set((await listSubmodules(path)).map((s) => s.path))
     const requested = p.map(str)
     if (requested.some((x) => !known.has(x))) throw new GitError('unknown submodule')
-    await updateSubmodules(path, requested)
+    return updateSubmodules(path, requested)
   },
   commit: (_s, repo, message, amend) => commit(knownRepo(repo), str(message), amend === true),
   createBranch: (_s, repo, name, start, switchTo) => createBranch(knownRepo(repo), str(name), str(start), switchTo === true),

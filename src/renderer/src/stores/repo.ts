@@ -645,7 +645,11 @@ export const useRepo = defineStore('repo', () => {
       ))
     )
       return
-    await network('submodules', (r) => window.gitspynx.updateSubmodules(r, paths))
+    const path = info.value?.path
+    let skipped: string[] = []
+    await network('submodules', async (r) => void (skipped = await window.gitspynx.updateSubmodules(r, paths)))
+    if (skipped.length && info.value?.path === path)
+      notice.value = `Nicht aktualisiert: ${skipped.join(', ')} – in .gitmodules oder der lokalen Konfiguration steht update = none.`
   }
 
   const close = () => {

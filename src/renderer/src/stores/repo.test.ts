@@ -338,6 +338,14 @@ describe('repo store', () => {
       expect(repo.undoLabel).toBe('Merge „side“')
     })
 
+    it('says which submodules git skipped because of update = none', async () => {
+      const { repo, w } = await opened()
+      w.gitspynx.updateSubmodules = async () => ['deps/lib']
+      await repo.updateSubmodules([])
+      expect(repo.notice).toMatch(/deps\/lib/)
+      expect(repo.notice).toMatch(/update = none/)
+    })
+
     it('asks before pruning worktrees', async () => {
       const { repo, w } = await opened()
       let pruned = false
@@ -812,7 +820,7 @@ describe('repo store', () => {
       w().gitspynx.readLog = async () => page('c', 3)
       w().gitspynx.confirm = async () => confirm
       const calls: string[][] = []
-      w().gitspynx.updateSubmodules = async (_r: string, paths: string[]) => void calls.push(paths)
+      w().gitspynx.updateSubmodules = async (_r: string, paths: string[]) => (calls.push(paths), [])
       const repo = useRepo()
       await repo.open('/r')
       return { repo, calls }
