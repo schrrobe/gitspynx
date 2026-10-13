@@ -48,6 +48,7 @@ export interface RepoInfo {
   worktrees: Worktree[] // first = main work tree
   submodules: Submodule[]
   lfs: LfsInfo | null // null: the repository does not use Git LFS
+  lfsAvailable: boolean // git-lfs on the app's PATH
 }
 
 export interface LfsInfo {

@@ -85,6 +85,16 @@ beforeAll(() => {
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
 describe('git backend', () => {
+  it('reports whether git-lfs is available', async () => {
+    let installed = true
+    try {
+      execFileSync('git', ['lfs', 'version'], { stdio: 'ignore' })
+    } catch {
+      installed = false
+    }
+    expect((await openRepo(dir)).lfsAvailable).toBe(installed)
+  })
+
   it('opens a repository from a subdirectory and reports head and refs', async () => {
     const info = await openRepo(join(dir, '.git'))
     expect(info.path).toBe(realpathSync.native(g('rev-parse', '--show-toplevel'))) // native form on Windows

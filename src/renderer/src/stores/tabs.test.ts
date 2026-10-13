@@ -18,7 +18,8 @@ const infoFor = (path: string): RepoInfo => ({
   stashes: [],
   worktrees: [],
   submodules: [],
-  lfs: null
+  lfs: null,
+  lfsAvailable: false
 })
 
 beforeEach(() => {

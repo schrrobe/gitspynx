@@ -96,7 +96,7 @@ export function buildCommands({ repo, tabs, settings, pickRepo }: Context): Comm
       enabled: () => idle() && !!repo.info?.submodules.length,
       run: () => repo.updateSubmodules()
     },
-    { id: 'lfs.track', title: 'Git LFS: Muster tracken…', enabled: idle, run: () => repo.lfsTrack() },
+    { id: 'lfs.track', title: 'Git LFS: Muster tracken…', enabled: () => idle() && !!repo.info?.lfsAvailable, run: () => repo.lfsTrack() },
     { id: 'lfs.pull', title: 'Git LFS: Dateien holen', enabled: () => idle() && !!repo.info?.lfs?.installed, run: () => repo.lfsPull() },
     { id: 'repo.stash', title: 'Stash', enabled: () => idle() && repo.status.length > 0, run: () => repo.stash() },
     { id: 'repo.pop', title: 'Stash anwenden und löschen (Pop)', enabled: () => idle() && !!repo.info?.stashes.length, run: () => repo.popLatestStash() },

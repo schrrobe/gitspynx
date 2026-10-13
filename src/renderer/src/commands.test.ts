@@ -62,6 +62,20 @@ describe('buildCommands', () => {
   })
 })
 
+describe('LFS commands', () => {
+  it('offers tracking a pattern only when git-lfs is available', () => {
+    const track = (lfsAvailable: boolean) =>
+      buildCommands({
+        repo: { info: { path: '/r', head: { branch: 'main', sha: 'a' }, lfs: null, lfsAvailable }, busy: null } as never,
+        tabs: { tabs: ['/r'], active: 0 } as never,
+        settings: { settings: { zoom: 1, pullMode: 'ff-only' } } as never,
+        pickRepo: () => {}
+      }).find((c) => c.id === 'lfs.track')!
+    expect(track(false).enabled!()).toBe(false)
+    expect(track(true).enabled!()).toBe(true)
+  })
+})
+
 describe('passesTerminal', () => {
   it('lets tab switching, palette and terminal toggle through, keeps shell keys elsewhere', () => {
     expect(passesTerminal(cmd('tab.next'), 'Ctrl+Tab', false)).toBe(true)

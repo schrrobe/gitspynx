@@ -133,12 +133,15 @@ export async function openRepo(dir: string): Promise<RepoInfo> {
     listWorktrees(path).catch(() => []),
     listSubmodules(path).catch(() => []) // e.g. a broken .gitmodules must not block opening
   ])
-  const lfs = (await lfsPatterns(path)).length ? await lfsInfo(path).catch(() => null) : null
+  const [lfs, lfsOnPath] = await Promise.all([
+    lfsPatterns(path).then((p) => (p.length ? lfsInfo(path).catch(() => null) : null)),
+    lfsAvailable(path)
+  ])
   // Stashes are listed separately; their internal index/untracked commits are not history, but
   // the commit a stash was made on is, even when no branch reaches it any more.
   const stashBases = stashes.map((s) => s.parents[0]).filter(Boolean)
   const tips = [...new Set([...(head.sha ? [head.sha] : []), ...refs.filter((r) => r.kind !== 'stash').map((r) => r.target), ...stashBases])]
-  return { path, head, refs, tips, operation, stashes, worktrees, submodules, lfs }
+  return { path, head, refs, tips, operation, stashes, worktrees, submodules, lfs, lfsAvailable: lfsOnPath }
 }
 
 // Pages over a fixed set of tips so commits made between pages cannot shift the order.
@@ -760,6 +763,14 @@ export async function updateSubmodules(repo: string, paths: string[]): Promise<s
 // missing LFS hooks as a side effect (even into a tracked core.hooksPath folder).
 async function lfsPatterns(repo: string): Promise<string[]> {
   return readFile(join(repo, '.gitattributes'), 'utf8').then(parseLfsPatterns, () => [])
+}
+
+// git-lfs on the PATH: a hit is kept, a miss is checked again after 30 s (installed meanwhile).
+let lfsCheck: { at: number; ok: Promise<boolean> } | null = null
+export async function lfsAvailable(cwd: string): Promise<boolean> {
+  if (lfsCheck && !(await lfsCheck.ok) && Date.now() - lfsCheck.at > 30_000) lfsCheck = null
+  lfsCheck ??= { at: Date.now(), ok: run(['lfs', 'version'], cwd, [0, 1, 128, 129]).then((r) => r.code === 0, () => false) }
+  return lfsCheck.ok
 }
 
 export async function lfsInfo(repo: string): Promise<LfsInfo> {
