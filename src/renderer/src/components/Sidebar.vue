@@ -76,9 +76,20 @@ async function worktreeMenu(t: Worktree) {
     { id: 'open', label: 'Als Tab öffnen', enabled: !current && !t.prunable },
     { separator: true },
     ...(t.prunable ? [{ id: 'prune', label: 'Verwaiste Worktrees aufräumen' }] : []),
-    { id: 'remove', label: t.locked ? 'Entfernen… (gesperrt: git worktree unlock)' : 'Entfernen…', enabled: !t.main && !current && !t.locked }
+    ...(t.main ? [] : [{ id: 'lock', label: t.locked ? 'Entsperren' : 'Sperren (vor Aufräumen und Verschieben schützen)' }]),
+    { id: 'move', label: 'Verschieben…', enabled: !t.main && !current && !t.locked && !t.prunable },
+    { id: 'remove', label: t.locked ? 'Entfernen… (erst entsperren)' : 'Entfernen…', enabled: !t.main && !current && !t.locked }
   ])
   if (id === 'open') tabs.openPath(t.path)
+  else if (id === 'lock') repo.lockWorktree(t.path, !t.locked)
+  else if (id === 'move') {
+    const to = await repo.moveWorktree(t.path)
+    const i = tabs.tabs.indexOf(t.path)
+    if (to && i !== -1) {
+      await tabs.closeTab(i) // its old folder is gone; open it at the new place
+      await tabs.openPath(to)
+    }
+  }
   else if (id === 'prune') repo.pruneWorktrees()
   else if (id === 'remove' && (await repo.removeWorktree(t.path))) {
     const i = tabs.tabs.indexOf(t.path)

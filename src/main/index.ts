@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process'
 import { readFile, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { type DiffTarget, type GitspynxApi, type HunkSelection, type RebaseStep, type UndoStep, MAX_LOG_PAGE, type MenuItem, type RepoChange, type Resolution, type Session } from '../shared/types'
-import { searchContent, discardHunk, revert, rebaseState, setIdleHold, setGitEnv, assertNewWorktreeBranch,
+import { lockWorktree, unlockWorktree, moveWorktree, searchContent, discardHunk, revert, rebaseState, setIdleHold, setGitEnv, assertNewWorktreeBranch,
   abortOperation,
   addWorktree,
   applyUndo,
@@ -372,6 +372,19 @@ const handlers: Handlers = {
     return res.filePath
   },
   removeWorktree: (_s, repo, path, force) => removeWorktree(knownRepo(repo), str(path), force === true),
+  lockWorktree: (_s, repo, path) => lockWorktree(knownRepo(repo), str(path)),
+  unlockWorktree: (_s, repo, path) => unlockWorktree(knownRepo(repo), str(path)),
+  // the new place is chosen in main (save dialog), never handed in by the renderer
+  async moveWorktree(sender, repo, path) {
+    const repoPath = knownRepo(repo)
+    const from = str(path)
+    const window = BrowserWindow.fromWebContents(sender) ?? undefined
+    const res = await dialog.showSaveDialog(window!, { title: `Worktree „${basename(from)}“ verschieben`, defaultPath: from, buttonLabel: 'Hierhin verschieben', properties: ['createDirectory'] })
+    if (res.canceled || !res.filePath) return null
+    await moveWorktree(repoPath, from, res.filePath)
+    picked.add(res.filePath) // the renderer may open it as a tab
+    return res.filePath
+  },
   pruneWorktrees: (_s, repo) => pruneWorktrees(knownRepo(repo)),
   lfsTrack: (_s, repo, pattern) => lfsTrack(knownRepo(repo), str(pattern)),
   lfsUntrack: (_s, repo, pattern) => lfsUntrack(knownRepo(repo), str(pattern)),

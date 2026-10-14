@@ -779,10 +779,33 @@ export async function addWorktree(repo: string, path: string, branch: string, fr
   await run(fromSha ? ['worktree', 'add', '-b', branch, path, fromSha] : ['worktree', 'add', path, branch], repo)
 }
 
-export async function removeWorktree(repo: string, path: string, force: boolean): Promise<void> {
+// A linked work tree reported by git for this repository (never the main one).
+async function linkedWorktree(repo: string, path: string, action: string) {
   const tree = (await listWorktrees(repo)).find((t) => t.path === path)
   if (!tree) throw new GitError(`not a work tree of this repository: ${path}`)
-  if (tree.main) throw new GitError('the main work tree cannot be removed')
+  if (tree.main) throw new GitError(`the main work tree cannot be ${action}`)
+  return tree
+}
+
+// A locked work tree is kept by prune (e.g. on a removable disk) and cannot be removed or moved.
+export async function lockWorktree(repo: string, path: string, reason?: string): Promise<void> {
+  await linkedWorktree(repo, path, 'locked')
+  await run(['worktree', 'lock', ...(reason ? ['--reason', reason] : []), '--', path], repo)
+}
+
+export async function unlockWorktree(repo: string, path: string): Promise<void> {
+  await linkedWorktree(repo, path, 'unlocked')
+  await run(['worktree', 'unlock', '--', path], repo)
+}
+
+export async function moveWorktree(repo: string, path: string, to: string): Promise<void> {
+  if (!isAbsolute(to)) throw new GitError('work tree path must be absolute')
+  await linkedWorktree(repo, path, 'moved')
+  await run(['worktree', 'move', '--', path, to], repo)
+}
+
+export async function removeWorktree(repo: string, path: string, force: boolean): Promise<void> {
+  await linkedWorktree(repo, path, 'removed')
   await run(['worktree', 'remove', ...(force ? ['--force'] : []), path], repo)
 }
 

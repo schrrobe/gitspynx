@@ -739,6 +739,14 @@ export const useRepo = defineStore('repo', () => {
     return removed
   }
 
+  const lockWorktree = (path: string, lock: boolean) => mutate((r) => (lock ? window.gitspynx.lockWorktree(r, path) : window.gitspynx.unlockWorktree(r, path)))
+  // Resolves to the new path (null when cancelled or failed).
+  async function moveWorktree(path: string): Promise<string | null> {
+    let to: string | null = null
+    await mutate(async (r) => void (to = await window.gitspynx.moveWorktree(r, path)))
+    return to
+  }
+
   async function pruneWorktrees() {
     if (await window.gitspynx.confirm('Verwaiste Worktrees aufräumen?', 'Git vergisst Worktrees, deren Ordner fehlt. Die Branches bleiben erhalten.', 'Aufräumen'))
       await mutate((r) => window.gitspynx.pruneWorktrees(r))
@@ -794,6 +802,6 @@ export const useRepo = defineStore('repo', () => {
     graph, refsBySha, open, refresh, loadMore, select, refreshStatus, openDiff, closeDiff, stage, unstage, commit, close,
     checkoutBranch, createBranch, renameBranch, deleteBranch, busy, fetchAll, pullBranch, pushBranch, deleteRemoteBranch,
     conflict, mergeInto, rebaseOnto, cherryPick, revertCommit, continueOp, skipOp, abortOp, openConflict, resolve,
-    stash, applyStash, popLatestStash, dropStash, stageHunk, discardHunks, addWorktree, removeWorktree, pruneWorktrees, updateSubmodules, lfsTrack, lfsUntrack, lfsPull, undo, redo, undoLabel, redoLabel, rebasePlan, openRebasePlan, startRebase, hidden, solo, toggleHidden, toggleSolo, resetFilters, loadAll, revFor, backgroundErrors, forget, searchContent
+    stash, applyStash, popLatestStash, dropStash, stageHunk, discardHunks, addWorktree, removeWorktree, lockWorktree, moveWorktree, pruneWorktrees, updateSubmodules, lfsTrack, lfsUntrack, lfsPull, undo, redo, undoLabel, redoLabel, rebasePlan, openRebasePlan, startRebase, hidden, solo, toggleHidden, toggleSolo, resetFilters, loadAll, revFor, backgroundErrors, forget, searchContent
   }
 })

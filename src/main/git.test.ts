@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { searchContent, discardHunk, revert, rebaseState, setIdleHold, assertNewWorktreeBranch,
+import { lockWorktree, unlockWorktree, moveWorktree, searchContent, discardHunk, revert, rebaseState, setIdleHold, assertNewWorktreeBranch,
   abortOperation,
   lfsInfo,
   lfsTrack,
@@ -1231,6 +1231,23 @@ describe('worktrees', () => {
   it('refuses to remove the main work tree or an unknown path', async () => {
     await expect(removeWorktree(main, main, true)).rejects.toThrow(/main work tree/)
     await expect(removeWorktree(main, join(root, 'nope'), true)).rejects.toThrow(/not a work tree/)
+  })
+
+  it('locks, unlocks and moves a work tree, but never the main one', async () => {
+    const wt = join(root, 'wt-lock')
+    await addWorktree(main, wt, 'lock-branch', w('rev-parse', 'HEAD'))
+    await lockWorktree(main, wt, 'on a USB disk')
+    expect((await listWorktrees(main)).find((t) => t.path === wt)?.locked).toBe(true)
+    await unlockWorktree(main, wt)
+    expect((await listWorktrees(main)).find((t) => t.path === wt)?.locked).toBe(false)
+    const moved = join(root, 'wt-moved')
+    await moveWorktree(main, wt, moved)
+    const list = await listWorktrees(main)
+    expect(list.some((t) => t.path === realpathSync.native(moved))).toBe(true)
+    expect(existsSync(wt)).toBe(false)
+    await expect(lockWorktree(main, main)).rejects.toThrow(/main work tree/)
+    await expect(moveWorktree(main, join(root, 'nope'), join(root, 'x'))).rejects.toThrow(/not a work tree/)
+    await removeWorktree(main, realpathSync.native(moved), true)
   })
 
   it('marks a work tree whose folder is gone as prunable, and prunes it', async () => {
