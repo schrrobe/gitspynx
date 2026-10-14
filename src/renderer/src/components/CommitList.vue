@@ -120,7 +120,31 @@ function move(delta: number) {
 // Search: matching rows are highlighted, Enter / Shift+Enter walks through them.
 const query = ref('')
 const searchInput = ref<HTMLInputElement>()
-const hits = computed(() => searchCommits(repo.commits, query.value))
+// 'code': commits whose changes contain the text (git log -S, "re:" = regex on changed lines)
+const mode = ref<'meta' | 'code'>('meta')
+const contentShas = ref<Set<string> | null>(null)
+const searching = ref(false)
+let searchSeq = 0
+let searchTimer: ReturnType<typeof setTimeout> | undefined
+watch([query, mode], () => {
+  clearTimeout(searchTimer)
+  const my = ++searchSeq
+  contentShas.value = null
+  if (mode.value !== 'code' || !query.value.trim()) return void (searching.value = false)
+  searching.value = true
+  searchTimer = setTimeout(async () => {
+    const shas = await repo.searchContent(query.value)
+    if (my !== searchSeq) return // a newer query is on its way
+    contentShas.value = shas
+    searching.value = false
+  }, 400)
+})
+const hits = computed(() => {
+  if (mode.value === 'meta') return searchCommits(repo.commits, query.value)
+  const shas = contentShas.value
+  return shas ? repo.commits.flatMap((c, i) => (shas.has(c.sha) ? [i] : [])) : []
+})
+const notLoaded = computed(() => (contentShas.value ? contentShas.value.size - hits.value.length : 0))
 const hitSet = computed(() => new Set(hits.value))
 // Position is derived from the selection, so paging or refreshing history never resets it.
 const selectedIndex = computed(() => repo.commits.findIndex((c) => c.sha === repo.selected))
@@ -144,18 +168,23 @@ watch(focusSearchRequest, async () => {
 <template>
   <div class="wrap">
   <div class="search">
+    <select v-model="mode" aria-label="Suchen in" title="Suchen in">
+      <option value="meta">Nachricht/Autor/SHA</option>
+      <option value="code">Code (Änderungen)</option>
+    </select>
     <input
       ref="searchInput"
       v-model="query"
       type="search"
-      placeholder="Commits suchen – Nachricht, Autor, SHA"
+:placeholder="mode === 'code' ? 'Text in Änderungen (re: für regulären Ausdruck)' : 'Commits suchen – Nachricht, Autor, SHA'"
       aria-label="Commits suchen"
       @keydown.enter.exact.prevent="nextHit(1)"
       @keydown.shift.enter.prevent="nextHit(-1)"
       @keydown.esc="query = ''"
     />
     <template v-if="query.trim()">
-      <span class="dim count">{{ hits.length ? `${position + 1 || '–'}/${hits.length}` : 'keine Treffer' }}</span>
+      <span class="dim count">{{ searching ? 'sucht…' : hits.length ? `${position + 1 || '–'}/${hits.length}` : 'keine Treffer' }}</span>
+      <span v-if="notLoaded > 0" class="dim">+{{ notLoaded }} nicht geladen</span>
       <button :disabled="!hits.length" aria-label="Vorheriger Treffer" @click="nextHit(-1)">↑</button>
       <button :disabled="!hits.length" aria-label="Nächster Treffer" @click="nextHit(1)">↓</button>
       <button v-if="!repo.complete" :disabled="repo.loading" :title="`Nur ${repo.commits.length} geladene Commits durchsucht`" @click="repo.loadAll()">
@@ -243,6 +272,7 @@ watch(focusSearchRequest, async () => {
 }
 .search input:focus { outline: none; border-color: var(--accent); }
 .search button { padding: 1px 8px; }
+.search select { font: inherit; color: var(--text); background: var(--bg-panel); border: 1px solid var(--border); border-radius: 6px; padding: 2px 4px; }
 .count { font-variant-numeric: tabular-nums; min-width: 72px; text-align: right; }
 .row.hit .subject { font-weight: 600; }
 .row.dimmed { opacity: 0.45; }

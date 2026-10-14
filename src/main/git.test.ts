@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { discardHunk, revert, rebaseState, setIdleHold, assertNewWorktreeBranch,
+import { searchContent, discardHunk, revert, rebaseState, setIdleHold, assertNewWorktreeBranch,
   abortOperation,
   lfsInfo,
   lfsTrack,
@@ -1475,6 +1475,55 @@ describe.skipIf(!hasLfs)('lfs', () => {
     expect(readFileSync(join(hooked, '.gitattributes'), 'utf8')).toContain('*.psd filter=lfs')
     expect(readFileSync(join(hooked, '.git', 'hooks', 'pre-push'), 'utf8')).toContain('echo mine') // left alone
     rmSync(hooked, { recursive: true })
+  })
+})
+
+describe('content search', () => {
+  let cd: string
+  const c = (...args: string[]) => execFileSync('git', args, { cwd: cd, env }).toString().trim()
+  beforeAll(() => {
+    cd = mkdtempSync(join(tmpdir(), 'gitspynx-search-'))
+    c('init', '-q', '-b', 'main')
+    writeFileSync(join(cd, 'a.txt'), 'hello\n')
+    c('add', '.')
+    c('commit', '-q', '-m', 'base')
+    writeFileSync(join(cd, 'a.txt'), 'hello\nconst needle = 1\n')
+    c('commit', '-q', '-am', 'add needle')
+    writeFileSync(join(cd, 'a.txt'), 'hello\nconst needle = 2\n')
+    c('commit', '-q', '-am', 'change value')
+    writeFileSync(join(cd, 'a.txt'), 'hello\n')
+    c('commit', '-q', '-am', 'remove needle')
+  })
+  afterAll(() => rmSync(cd, { recursive: true, force: true }))
+
+  it('finds commits that add or remove a text (-S) or touch lines matching a pattern (-G)', async () => {
+    const tips = [c('rev-parse', 'HEAD')]
+    const subjects = async (q: string, mode: 'text' | 'regex') => {
+      const shas = await searchContent(cd, tips, q, mode)
+      return shas.map((sha) => c('log', '-1', '--format=%s', sha))
+    }
+    expect(await subjects('needle', 'text')).toEqual(['remove needle', 'add needle'])
+    expect(await subjects('needle = [0-9]', 'regex')).toEqual(['remove needle', 'change value', 'add needle'])
+    expect(await subjects('nothing-like-this', 'text')).toEqual([])
+    await expect(searchContent(cd, tips, '--output=/tmp/x', 'text')).resolves.toEqual([]) // a term, never an option
+  })
+
+  it('refuses to search a partial clone (it would download every missing object)', async () => {
+    const partial = mkdtempSync(join(tmpdir(), 'gitspynx-partial-'))
+    try {
+      execFileSync('git', ['clone', '-q', '--no-local', '--filter=blob:none', cd, partial], { env: { ...env, GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'uploadpack.allowFilter', GIT_CONFIG_VALUE_0: 'true' } })
+      const tip = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: partial }).toString().trim()
+      await expect(searchContent(partial, [tip], 'needle', 'text')).rejects.toThrow(/partial clone/)
+    } finally {
+      rmSync(partial, { recursive: true, force: true })
+    }
+  })
+
+  it('cancels a running search', async () => {
+    const abort = new AbortController()
+    const search = searchContent(cd, [c('rev-parse', 'HEAD')], 'needle', 'text', abort.signal)
+    abort.abort()
+    await expect(search).rejects.toThrow(/cancelled/)
   })
 })
 

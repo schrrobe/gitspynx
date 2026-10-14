@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process'
 import { readFile, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { type DiffTarget, type GitspynxApi, type HunkSelection, type RebaseStep, type UndoStep, MAX_LOG_PAGE, type MenuItem, type RepoChange, type Resolution, type Session } from '../shared/types'
-import { discardHunk, revert, rebaseState, setIdleHold, setGitEnv, assertNewWorktreeBranch,
+import { searchContent, discardHunk, revert, rebaseState, setIdleHold, setGitEnv, assertNewWorktreeBranch,
   abortOperation,
   addWorktree,
   applyUndo,
@@ -265,6 +265,17 @@ function askInWindow(prompt: string): Promise<string | null> {
   })
 }
 
+const contentSearches = new Map<string, AbortController>()
+
+// A filter may only narrow the tips snapshot taken at open (undefined: the whole snapshot).
+function snapshotTips(path: string, tips: unknown): string[] {
+  const snapshot = opened.get(path)!
+  if (tips === undefined) return snapshot
+  if (!Array.isArray(tips)) throw new GitError('invalid argument')
+  const wanted = new Set(tips)
+  return snapshot.filter((t) => wanted.has(t))
+}
+
 const handlers: Handlers = {
   async askpassReply(sender, id, answer) {
     const pending = askpassPending.get(int(id, 1e9))
@@ -317,12 +328,21 @@ const handlers: Handlers = {
   },
   readLog: (_s, repo, skip, limit, tips) => {
     const path = knownRepo(repo)
-    const snapshot = opened.get(path)!
-    // a filter may only narrow the snapshot taken at open
-    if (tips !== undefined && !Array.isArray(tips)) throw new GitError('invalid argument')
-    const wanted = new Set(tips as string[] | undefined)
-    const chosen = tips === undefined ? snapshot : snapshot.filter((t) => wanted.has(t))
-    return readLog(path, chosen, int(skip, 1e7), int(limit, MAX_LOG_PAGE))
+    return readLog(path, snapshotTips(path, tips), int(skip, 1e7), int(limit, MAX_LOG_PAGE))
+  },
+  // one content search per repository: a new one cancels the previous
+  async searchContent(_s, repo, tips, term, mode) {
+    const path = knownRepo(repo)
+    const t = str(term)
+    if (!t || t.length > 500 || (mode !== 'text' && mode !== 'regex')) throw new GitError('invalid argument')
+    contentSearches.get(path)?.abort()
+    const abort = new AbortController()
+    contentSearches.set(path, abort)
+    try {
+      return await searchContent(path, snapshotTips(path, tips), t, mode, abort.signal)
+    } finally {
+      if (contentSearches.get(path) === abort) contentSearches.delete(path)
+    }
   },
   readCommit: (_s, repo, sha) => readCommit(knownRepo(repo), str(sha)),
   readStatus: (_s, repo) => readStatus(knownRepo(repo)),

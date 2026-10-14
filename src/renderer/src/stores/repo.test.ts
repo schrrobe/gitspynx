@@ -401,6 +401,16 @@ describe('repo store', () => {
       expect(sent).toEqual([2, 0])
     })
 
+    it('searches commit contents, with re: switching to a regular expression', async () => {
+      const { repo, w } = await opened()
+      const calls: unknown[][] = []
+      w.gitspynx.searchContent = async (...a: unknown[]) => (calls.push(a.slice(2)), ['c1'])
+      expect([...(await repo.searchContent('needle'))!]).toEqual(['c1'])
+      await repo.searchContent('re:need+le')
+      expect(calls).toEqual([['needle', 'text'], ['need+le', 'regex']])
+      expect(await repo.searchContent('re:  ')).toBeNull()
+    })
+
     it('asks before pruning worktrees', async () => {
       const { repo, w } = await opened()
       let pruned = false
@@ -771,6 +781,17 @@ describe('repo store', () => {
       expect(repo.commits.length).toBe(MAX_LOG_PAGE + 3000)
       await repo.refresh(true)
       expect(repo.commits.length).toBe(MAX_LOG_PAGE + 3000)
+    })
+
+    it('loads everything in large pages (each page walks the whole history without a commit-graph)', async () => {
+      const all = page('p', 120_000)
+      const limits: number[] = []
+      w().gitspynx.readLog = async (_r: string, skip: number, limit: number) => (limits.push(limit), all.slice(skip, skip + limit))
+      const repo = useRepo()
+      await repo.open('/r')
+      await repo.loadAll()
+      expect(repo.commits.length).toBe(120_000)
+      expect(limits.slice(1)).toEqual([MAX_LOG_PAGE, MAX_LOG_PAGE, MAX_LOG_PAGE])
     })
 
     it('keeps the same commit list (no new layout) when the history did not change', async () => {

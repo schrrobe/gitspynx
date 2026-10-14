@@ -125,6 +125,7 @@ export interface GitspynxApi {
   terminalAck(id: number, chars: number): Promise<void> // output rendered; flow control in main
   askpassReply(id: number, answer: string | null): Promise<void>
   readRebaseState(repo: string): Promise<{ branch: string; origHead: string } | null>
+  searchContent(repo: string, tips: string[] | undefined, term: string, mode: 'text' | 'regex'): Promise<string[]>
   commit(repo: string, message: string, amend: boolean): Promise<void>
   createBranch(repo: string, name: string, start: string, switchTo: boolean): Promise<void>
   checkout(repo: string, branch: string): Promise<void>

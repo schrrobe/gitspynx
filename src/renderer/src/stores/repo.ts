@@ -207,17 +207,19 @@ export const useRepo = defineStore('repo', () => {
 
   const refresh = (background = false) => info.value && open(info.value.path, commits.value.length, undefined, background)
 
-  const loadMore = () => {
+  // size: scrolling loads small pages; "load all" large ones — without a commit-graph file every
+  // page makes git walk the whole history (git/git: ~1 s per page)
+  const loadMore = (size = PAGE) => {
     if (!info.value || loading.value || complete.value) return Promise.resolve()
     return tracked(guard(async () => {
       if (!info.value) return
       const gen = generation
       loading.value = true
       try {
-        const page = await window.gitspynx.readLog(info.value.path, commits.value.length, PAGE, tipsFor(info.value))
+        const page = await window.gitspynx.readLog(info.value.path, commits.value.length, size, tipsFor(info.value))
         if (gen !== generation) return
         commits.value = [...commits.value, ...page]
-        complete.value = page.length < PAGE
+        complete.value = page.length < size
       } finally {
         if (gen === generation) loading.value = false
       }
@@ -679,6 +681,22 @@ export const useRepo = defineStore('repo', () => {
     return reloadFiltered()
   }
 
+  // Commits whose changes contain a text (git log -S); "re:pattern" searches changed lines with a
+  // regular expression (-G). Branch filters apply. Resolves to the matching shas, null for no term.
+  async function searchContent(query: string): Promise<Set<string> | null> {
+    if (!info.value) return null
+    const regex = query.startsWith('re:')
+    const term = (regex ? query.slice(3) : query).trim()
+    if (!term) return null
+    try {
+      return new Set(await window.gitspynx.searchContent(info.value.path, tipsFor(info.value), term, regex ? 'regex' : 'text'))
+    } catch (e) {
+      if (/cancelled/.test(String(e))) return null // replaced by a newer search
+      report(e)
+      return new Set()
+    }
+  }
+
   async function loadAll() {
     const path = info.value?.path
     while (info.value && info.value.path === path && !complete.value) { // another tab shown: stop
@@ -687,7 +705,7 @@ export const useRepo = defineStore('repo', () => {
         continue
       }
       const before = commits.value.length
-      await loadMore()
+      await loadMore(MAX_LOG_PAGE)
       if (commits.value.length === before && !loadRun) break // error
     }
   }
@@ -776,6 +794,6 @@ export const useRepo = defineStore('repo', () => {
     graph, refsBySha, open, refresh, loadMore, select, refreshStatus, openDiff, closeDiff, stage, unstage, commit, close,
     checkoutBranch, createBranch, renameBranch, deleteBranch, busy, fetchAll, pullBranch, pushBranch, deleteRemoteBranch,
     conflict, mergeInto, rebaseOnto, cherryPick, revertCommit, continueOp, skipOp, abortOp, openConflict, resolve,
-    stash, applyStash, popLatestStash, dropStash, stageHunk, discardHunks, addWorktree, removeWorktree, pruneWorktrees, updateSubmodules, lfsTrack, lfsUntrack, lfsPull, undo, redo, undoLabel, redoLabel, rebasePlan, openRebasePlan, startRebase, hidden, solo, toggleHidden, toggleSolo, resetFilters, loadAll, revFor, backgroundErrors, forget
+    stash, applyStash, popLatestStash, dropStash, stageHunk, discardHunks, addWorktree, removeWorktree, pruneWorktrees, updateSubmodules, lfsTrack, lfsUntrack, lfsPull, undo, redo, undoLabel, redoLabel, rebasePlan, openRebasePlan, startRebase, hidden, solo, toggleHidden, toggleSolo, resetFilters, loadAll, revFor, backgroundErrors, forget, searchContent
   }
 })

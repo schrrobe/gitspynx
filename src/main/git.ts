@@ -31,14 +31,14 @@ export const setIdleHold = (hold: () => boolean) => void (idleHold = hold)
 
 // Runs git without a shell. Exit codes listed in okCodes are returned instead of thrown.
 // timeout: wall-clock limit; idle: limit for a stretch without any output (network commands run
-// with --progress, so silence means a stalled transfer). Either kills git's whole process group
-// (ssh, credential helpers, hooks included).
-export function run(args: string[], cwd: string, okCodes = [0], stdin?: string, timeout = 0, env: Record<string, string> = {}, idle = 0): Promise<Result> {
+// with --progress, so silence means a stalled transfer); abort: cancel. Each kills git's whole
+// process group (ssh, credential helpers, hooks included).
+export function run(args: string[], cwd: string, okCodes = [0], stdin?: string, timeout = 0, env: Record<string, string> = {}, idle = 0, abort?: AbortSignal): Promise<Result> {
   return new Promise((resolve, reject) => {
     if (!existsSync(cwd)) return reject(new GitError(`folder not found: ${cwd}`))
     const child = spawn('git', ['--no-optional-locks', ...args], {
       cwd,
-      detached: (timeout > 0 || idle > 0) && process.platform !== 'win32', // own process group for the timers
+      detached: (timeout > 0 || idle > 0 || !!abort) && process.platform !== 'win32', // own process group to kill
       // English messages for the few checks that match git output; never wait for an editor
       // (continue keeps the prepared message). Hooks inherit only these.
       env: { ...process.env, GIT_TERMINAL_PROMPT: '0', LC_MESSAGES: 'C', GIT_EDITOR: 'true', ...sharedEnv, ...env }
@@ -50,7 +50,7 @@ export function run(args: string[], cwd: string, okCodes = [0], stdin?: string, 
     const signal = (sig: NodeJS.Signals) => {
       try {
         if (process.platform === 'win32' && child.pid) spawn('taskkill', ['/pid', String(child.pid), '/T', '/F']) // whole tree
-        else if (child.pid && (timeout > 0 || idle > 0)) process.kill(-child.pid, sig)
+        else if (child.pid && (timeout > 0 || idle > 0 || abort)) process.kill(-child.pid, sig)
         else child.kill(sig)
       } catch {
         child.kill(sig)
@@ -63,6 +63,9 @@ export function run(args: string[], cwd: string, okCodes = [0], stdin?: string, 
       hardKill ??= setTimeout(() => signal('SIGKILL'), 3000) // for processes that ignore SIGTERM
     }
     const timer = timeout > 0 ? setTimeout(() => stop(new GitError(`git ${args[0]} timed out after ${timeout / 1000}s`)), timeout) : undefined
+    const cancel = () => stop(new GitError(`git ${args[0]} cancelled`))
+    if (abort?.aborted) cancel()
+    else abort?.addEventListener('abort', cancel, { once: true })
     let lastOutput = Date.now()
     const idleTimer =
       idle > 0
@@ -160,6 +163,20 @@ export async function openRepo(dir: string): Promise<RepoInfo> {
   const stashBases = stashes.map((s) => s.parents[0]).filter(Boolean)
   const tips = [...new Set([...(head.sha ? [head.sha] : []), ...refs.filter((r) => r.kind !== 'stash').map((r) => r.target), ...stashBases])]
   return { path, head, refs, tips, operation, stashes, worktrees, submodules, lfs, lfsAvailable: lfsOnPath }
+}
+
+// Commits (from the given tips, newest first) whose changes contain a text: 'text' = the number
+// of occurrences changes (-S, the text was added or removed); 'regex' = a changed line matches
+// (-G). The term is glued to its option, so it can never be read as an option of its own.
+// Diffing every commit is slow in big histories (minutes): up to 5 min, cancellable. A partial
+// clone is refused, the search would download every missing tree and blob one by one.
+export async function searchContent(repo: string, tips: string[], term: string, mode: 'text' | 'regex', signal?: AbortSignal): Promise<string[]> {
+  if (!tips.length || !term) return []
+  const partial = await run(['config', '--get-regexp', '^(extensions\\.partialclone|remote\\..*\\.promisor)$'], repo, [0, 1])
+  if (partial.stdout.trim()) throw new GitError('content search is not available in a partial clone — it would download every missing object')
+  const args = ['log', '--stdin', '--topo-order', '--format=%H', mode === 'text' ? `-S${term}` : `-G${term}`, '--']
+  const out = await run(args, repo, [0], tips.join('\n') + '\n', 5 * 60_000, {}, 0, signal)
+  return out.stdout.split('\n').filter(Boolean)
 }
 
 // Pages over a fixed set of tips so commits made between pages cannot shift the order.
