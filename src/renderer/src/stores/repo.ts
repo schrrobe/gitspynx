@@ -558,6 +558,7 @@ export const useRepo = defineStore('repo', () => {
   const revFor = (r: Ref) => ((info.value?.refs ?? []).some((x) => x.fullName !== r.fullName && x.name === r.name) ? r.fullName : r.name)
   const mergeInto = (rev: string) => integrate((r) => window.gitspynx.merge(r, rev), `Merge „${shortRev(rev)}“`)
   const cherryPick = (sha: string) => integrate((r) => window.gitspynx.cherryPick(r, sha), `Cherry-Pick ${sha.slice(0, 7)}`)
+  const revertCommit = (sha: string) => integrate((r) => window.gitspynx.revert(r, sha), `Revert ${sha.slice(0, 7)}`)
   // Merge, cherry-pick and revert keep HEAD on its branch and are recorded like other actions. A
   // rebase runs detached; once Continue finishes it, the branch is recorded as moved from where
   // the rebase started (orig-head) to its new tip.
@@ -759,7 +760,7 @@ export const useRepo = defineStore('repo', () => {
     info, commits, complete, loading, error, notice, viewState, undoing, selected, detail, status, staged, unstaged, diffTarget, diff, unstageFiles,
     graph, refsBySha, open, refresh, loadMore, select, refreshStatus, openDiff, closeDiff, stage, unstage, commit, close,
     checkoutBranch, createBranch, renameBranch, deleteBranch, busy, fetchAll, pullBranch, pushBranch, deleteRemoteBranch,
-    conflict, mergeInto, rebaseOnto, cherryPick, continueOp, skipOp, abortOp, openConflict, resolve,
+    conflict, mergeInto, rebaseOnto, cherryPick, revertCommit, continueOp, skipOp, abortOp, openConflict, resolve,
     stash, applyStash, popLatestStash, dropStash, stageHunk, addWorktree, removeWorktree, pruneWorktrees, updateSubmodules, lfsTrack, lfsUntrack, lfsPull, undo, redo, undoLabel, redoLabel, rebasePlan, openRebasePlan, startRebase, hidden, solo, toggleHidden, toggleSolo, resetFilters, loadAll, revFor, backgroundErrors, forget
   }
 })

@@ -390,6 +390,13 @@ export async function rebase(repo: string, onto: string): Promise<'ok' | 'confli
   return mayConflict(repo, ['rebase', onto])
 }
 
+// A new commit that undoes `sha` (a merge is undone against its first parent).
+export async function revert(repo: string, sha: string): Promise<'ok' | 'conflicts'> {
+  assertRevision(sha)
+  const parents = (await run(['rev-list', '--parents', '-n1', sha], repo)).stdout.trim().split(' ').length - 1
+  return mayConflict(repo, ['revert', '--no-edit', ...(parents > 1 ? ['-m', '1'] : []), sha])
+}
+
 export async function cherryPick(repo: string, sha: string): Promise<'ok' | 'conflicts'> {
   assertRevision(sha)
   const parents = (await run(['rev-list', '--parents', '-n1', sha], repo)).stdout.trim().split(' ').length - 1

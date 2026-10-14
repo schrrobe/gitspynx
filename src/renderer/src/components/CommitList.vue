@@ -81,12 +81,15 @@ async function menu(sha: string) {
         ]
       : []),
     ...(head && !onHead && !repo.info?.operation ? [{ id: 'interactive', label: 'Interaktiver Rebase ab hier…' }] : []),
+    // also for the newest commit: undoing what is already pushed without rewriting history
+    ...(head && !repo.info?.operation ? [{ id: 'revert', label: `Commit rückgängig machen (Revert auf „${head}“)` }] : []),
     { id: 'worktree', label: 'Worktree mit neuem Branch hier anlegen…', enabled: !repo.busy },
     { separator: true },
     { id: 'copy', label: 'SHA kopieren' }
   ])
   if (id === 'create') repo.createBranch(sha)
   else if (id === 'cherry-pick') repo.cherryPick(sha)
+  else if (id === 'revert') repo.revertCommit(sha)
   else if (id === 'merge') repo.mergeInto(sha)
   else if (id === 'rebase') repo.rebaseOnto(sha)
   else if (id === 'interactive') repo.openRebasePlan(sha)

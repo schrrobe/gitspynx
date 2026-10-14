@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process'
 import { readFile, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { type DiffTarget, type GitspynxApi, type HunkSelection, type RebaseStep, type UndoStep, MAX_LOG_PAGE, type MenuItem, type RepoChange, type Resolution, type Session } from '../shared/types'
-import { rebaseState, setIdleHold, setGitEnv, assertNewWorktreeBranch,
+import { revert, rebaseState, setIdleHold, setGitEnv, assertNewWorktreeBranch,
   abortOperation,
   addWorktree,
   applyUndo,
@@ -404,6 +404,7 @@ const handlers: Handlers = {
   merge: (_s, repo, rev) => merge(knownRepo(repo), str(rev)),
   rebase: (_s, repo, onto) => rebase(knownRepo(repo), str(onto)),
   cherryPick: (_s, repo, sha) => cherryPick(knownRepo(repo), str(sha)),
+  revert: (_s, repo, sha) => revert(knownRepo(repo), str(sha)),
   continueOperation: (_s, repo) => continueOperation(knownRepo(repo)),
   skipOperation: (_s, repo) => skipOperation(knownRepo(repo)),
   abortOperation: (_s, repo) => abortOperation(knownRepo(repo)),

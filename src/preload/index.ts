@@ -49,6 +49,7 @@ const methods: (keyof GitspynxApi)[] = [
   'merge',
   'rebase',
   'cherryPick',
+  'revert',
   'continueOperation',
   'skipOperation',
   'abortOperation',

@@ -396,6 +396,18 @@ describe('repo store', () => {
       expect(pruned).toBe(false)
     })
 
+    it('records a revert and shows the working directory when it conflicts', async () => {
+      const { repo, w } = await opened()
+      let heads = 0
+      w.gitspynx.readHead = async () => ({ sha: heads++ ? 'r1' : 'a0', branch: 'main' })
+      w.gitspynx.revert = async () => 'ok'
+      await repo.revertCommit('c1abcdef')
+      expect(repo.undoLabel).toBe('Revert c1abcde')
+      w.gitspynx.revert = async () => 'conflicts'
+      await repo.revertCommit('c2abcdef')
+      expect(repo.selected).toBe(WIP)
+    })
+
     it('shows the working directory when a pull stops on conflicts', async () => {
       const { repo, w } = await opened()
       w.gitspynx.pull = async () => 'conflicts'

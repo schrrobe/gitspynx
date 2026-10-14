@@ -136,6 +136,7 @@ export interface GitspynxApi {
   merge(repo: string, rev: string): Promise<'ok' | 'conflicts'>
   rebase(repo: string, onto: string): Promise<'ok' | 'conflicts'>
   cherryPick(repo: string, sha: string): Promise<'ok' | 'conflicts'>
+  revert(repo: string, sha: string): Promise<'ok' | 'conflicts'>
   continueOperation(repo: string): Promise<'ok' | 'conflicts'>
   skipOperation(repo: string): Promise<'ok' | 'conflicts'>
   abortOperation(repo: string): Promise<void>

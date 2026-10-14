@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { rebaseState, setIdleHold, assertNewWorktreeBranch,
+import { revert, rebaseState, setIdleHold, assertNewWorktreeBranch,
   abortOperation,
   lfsInfo,
   lfsTrack,
@@ -659,6 +659,30 @@ describe('merge, rebase, cherry-pick and conflicts', () => {
     expect(await currentOperation(md)).toBe('am')
     await abortOperation(md)
     expect(await currentOperation(md)).toBeNull()
+  })
+
+  it('reverts a commit, and stops on conflicts as a revert operation', async () => {
+    m('switch', '-q', '-c', 'rev', 'main')
+    writeFileSync(join(md, 'r.txt'), 'added\n')
+    m('add', '.')
+    m('commit', '-q', '-m', 'add r')
+    expect(await revert(md, m('rev-parse', 'HEAD'))).toBe('ok')
+    expect(m('log', '-1', '--format=%s')).toBe('Revert "add r"')
+    expect(existsSync(join(md, 'r.txt'))).toBe(false)
+    // reverting a change that later commits built on conflicts
+    writeFileSync(join(md, 'r.txt'), 'one\n')
+    m('add', '.')
+    m('commit', '-q', '-m', 'r one')
+    const one = m('rev-parse', 'HEAD')
+    writeFileSync(join(md, 'r.txt'), 'two\n')
+    m('commit', '-q', '-am', 'r two')
+    try {
+      expect(await revert(md, one)).toBe('conflicts')
+      expect(await currentOperation(md)).toBe('revert')
+    } finally {
+      await abortOperation(md)
+      m('switch', '-q', 'main')
+    }
   })
 
   it('tells which branch a stopped rebase rewrites and where it started', async () => {
