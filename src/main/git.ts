@@ -893,6 +893,39 @@ export async function updateSubmodules(repo: string, paths: string[]): Promise<s
   return skipped
 }
 
+// A submodule path: relative, inside the work tree, nothing option-like.
+function submodulePath(path: string): string {
+  const p = path.replaceAll('\\', '/').replace(/\/+$/, '')
+  if (!p || isAbsolute(path) || p.startsWith('-') || p.split('/').some((seg) => seg === '..' || seg === '.' || seg === '' || seg === '.git'))
+    throw new GitError(`invalid submodule path: ${path}`)
+  return p
+}
+
+export async function addSubmodule(repo: string, url: string, path: string): Promise<void> {
+  if (!url.trim() || url.startsWith('-') || /[\r\n]/.test(url)) throw new GitError(`invalid submodule URL: ${url}`)
+  const p = submodulePath(path)
+  if (existsSync(join(repo, p))) throw new GitError(`${p} already exists`)
+  await run(['submodule', 'add', '--progress', '--', url, p], repo, [0], undefined, BACKSTOP, {}, STALL)
+}
+
+// Removes the gitlink, its .gitmodules entry and the checked-out folder (git keeps the clone in
+// .git/modules, so re-adding is cheap). Refused while the submodule has local changes.
+export async function removeSubmodule(repo: string, path: string): Promise<void> {
+  const p = submodulePath(path)
+  const sub = (await listSubmodules(repo)).find((s) => s.path === p && !s.parent)
+  if (!sub) throw new GitError(`not a submodule of this repository: ${p}`)
+  // -f also covers a submodule that was only added (staged); work inside it is checked first,
+  // since -f would throw it away
+  if (existsSync(join(repo, p, '.git')) && (await run(['status', '--porcelain'], join(repo, p))).stdout.trim())
+    throw new GitError(`${p} has local changes — commit or discard them inside the submodule first`)
+  await run([LITERAL, 'rm', '-q', '-f', '--', p], repo)
+}
+
+// Copies the URLs from .gitmodules into the local configuration (after a URL changed upstream).
+export async function syncSubmodules(repo: string): Promise<void> {
+  await run(['submodule', 'sync', '--recursive'], repo)
+}
+
 // ---- Git LFS ----
 
 // Read from the top-level .gitattributes directly: listing via `git lfs track` would install

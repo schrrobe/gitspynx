@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process'
 import { readFile, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { type DiffTarget, type GitspynxApi, type HunkSelection, type RebaseStep, type UndoStep, MAX_LOG_PAGE, type MenuItem, type RepoChange, type Resolution, type Session } from '../shared/types'
-import { lockWorktree, unlockWorktree, moveWorktree, searchContent, discardHunk, revert, rebaseState, setIdleHold, setGitEnv, assertNewWorktreeBranch,
+import { addSubmodule, removeSubmodule, syncSubmodules, lockWorktree, unlockWorktree, moveWorktree, searchContent, discardHunk, revert, rebaseState, setIdleHold, setGitEnv, assertNewWorktreeBranch,
   abortOperation,
   addWorktree,
   applyUndo,
@@ -407,6 +407,9 @@ const handlers: Handlers = {
   terminalResize: async (sender, id, cols, rows) => terminals.resize(sender.id, int(id, 1e9), int(cols, 100_000), int(rows, 100_000)),
   terminalKill: async (sender, id) => terminals.kill(sender.id, int(id, 1e9)),
   terminalAck: async (sender, id, chars) => terminals.ack(sender.id, int(id, 1e9), int(chars, 1e9)),
+  addSubmodule: (_s, repo, url, path) => addSubmodule(knownRepo(repo), str(url), str(path)),
+  removeSubmodule: (_s, repo, path) => removeSubmodule(knownRepo(repo), str(path)),
+  syncSubmodules: (_s, repo) => syncSubmodules(knownRepo(repo)),
   async updateSubmodules(_s, repo, p) {
     const path = knownRepo(repo)
     if (!Array.isArray(p)) throw new GitError('invalid argument')

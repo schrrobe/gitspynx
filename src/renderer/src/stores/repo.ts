@@ -761,6 +761,21 @@ export const useRepo = defineStore('repo', () => {
   // Fetches from the submodules' remotes, so it counts as a network operation. A submodule with
   // another commit checked out is reset to the recorded one: commits made on its detached HEAD
   // would end up on no branch, so ask first.
+  async function addSubmodule() {
+    const url = await ask('URL des Submoduls (z. B. https://github.com/org/lib.git)', '', 'Weiter')
+    if (!url) return
+    const guess = url.replace(/[\\/]+$/, '').split(/[\\/:]/).pop()?.replace(/\.git$/, '') || 'lib'
+    const path = await ask('Pfad im Repository', guess, 'Hinzufügen')
+    if (path) await network('submodules', (r) => window.gitspynx.addSubmodule(r, url, path))
+  }
+
+  async function removeSubmodule(path: string) {
+    if (await window.gitspynx.confirm(`Submodul „${path}“ entfernen?`, 'Der Ordner und der Eintrag in .gitmodules werden entfernt (als Änderung zum Committen). Git verweigert das, solange das Submodul lokale Änderungen hat.', 'Entfernen'))
+      await mutate((r) => window.gitspynx.removeSubmodule(r, path))
+  }
+
+  const syncSubmodules = () => mutate((r) => window.gitspynx.syncSubmodules(r))
+
   async function updateSubmodules(paths: string[] = []) {
     const subs = info.value?.submodules ?? []
     const targets = paths.length ? subs.filter((s) => paths.includes(s.path)) : subs.filter((s) => s.state !== 'uninitialized')
@@ -802,6 +817,6 @@ export const useRepo = defineStore('repo', () => {
     graph, refsBySha, open, refresh, loadMore, select, refreshStatus, openDiff, closeDiff, stage, unstage, commit, close,
     checkoutBranch, createBranch, renameBranch, deleteBranch, busy, fetchAll, pullBranch, pushBranch, deleteRemoteBranch,
     conflict, mergeInto, rebaseOnto, cherryPick, revertCommit, continueOp, skipOp, abortOp, openConflict, resolve,
-    stash, applyStash, popLatestStash, dropStash, stageHunk, discardHunks, addWorktree, removeWorktree, lockWorktree, moveWorktree, pruneWorktrees, updateSubmodules, lfsTrack, lfsUntrack, lfsPull, undo, redo, undoLabel, redoLabel, rebasePlan, openRebasePlan, startRebase, hidden, solo, toggleHidden, toggleSolo, resetFilters, loadAll, revFor, backgroundErrors, forget, searchContent
+    stash, applyStash, popLatestStash, dropStash, stageHunk, discardHunks, addWorktree, removeWorktree, lockWorktree, moveWorktree, pruneWorktrees, updateSubmodules, addSubmodule, removeSubmodule, syncSubmodules, lfsTrack, lfsUntrack, lfsPull, undo, redo, undoLabel, redoLabel, rebasePlan, openRebasePlan, startRebase, hidden, solo, toggleHidden, toggleSolo, resetFilters, loadAll, revFor, backgroundErrors, forget, searchContent
   }
 })

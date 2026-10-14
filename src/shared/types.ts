@@ -117,6 +117,9 @@ export interface GitspynxApi {
   unlockWorktree(repo: string, path: string): Promise<void>
   moveWorktree(repo: string, path: string): Promise<string | null> // new path, null when cancelled
   pruneWorktrees(repo: string): Promise<void>
+  addSubmodule(repo: string, url: string, path: string): Promise<void>
+  removeSubmodule(repo: string, path: string): Promise<void>
+  syncSubmodules(repo: string): Promise<void>
   updateSubmodules(repo: string, paths: string[]): Promise<string[]> // [] = all; resolves to the paths git skipped (update = none)
   lfsTrack(repo: string, pattern: string): Promise<void>
   lfsUntrack(repo: string, pattern: string): Promise<void>

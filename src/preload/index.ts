@@ -3,6 +3,9 @@ import type { GitspynxApi, GitspynxBridge, RepoChange } from '../shared/types'
 
 const methods: (keyof GitspynxApi)[] = [
   'askpassReply',
+  'addSubmodule',
+  'removeSubmodule',
+  'syncSubmodules',
   'readRebaseState',
   'searchContent',
   'pickRepo',

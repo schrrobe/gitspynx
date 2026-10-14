@@ -96,6 +96,8 @@ export function buildCommands({ repo, tabs, settings, pickRepo }: Context): Comm
       enabled: () => idle() && !!repo.info?.submodules.length,
       run: () => repo.updateSubmodules()
     },
+    { id: 'submodule.add', title: 'Submodul hinzufügen…', enabled: idle, run: () => repo.addSubmodule() },
+    { id: 'submodule.sync', title: 'Submodul-URLs aus .gitmodules übernehmen', enabled: () => idle() && !!repo.info?.submodules.length, run: () => repo.syncSubmodules() },
     { id: 'lfs.track', title: 'Git LFS: Muster tracken…', enabled: () => idle() && !!repo.info?.lfsAvailable, run: () => repo.lfsTrack() },
     { id: 'lfs.pull', title: 'Git LFS: Dateien holen', enabled: () => idle() && !!repo.info?.lfs?.installed, run: () => repo.lfsPull() },
     { id: 'repo.stash', title: 'Stash', enabled: () => idle() && repo.status.length > 0, run: () => repo.stash() },

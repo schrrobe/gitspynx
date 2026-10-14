@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { lockWorktree, unlockWorktree, moveWorktree, searchContent, discardHunk, revert, rebaseState, setIdleHold, assertNewWorktreeBranch,
+import { addSubmodule, removeSubmodule, syncSubmodules, lockWorktree, unlockWorktree, moveWorktree, searchContent, discardHunk, revert, rebaseState, setIdleHold, assertNewWorktreeBranch,
   abortOperation,
   lfsInfo,
   lfsTrack,
@@ -1420,6 +1420,34 @@ describe('submodules', () => {
     at(host, 'commit', '-q', '-m', 'embed')
     expect((await listSubmodules(host)).map((s) => [s.path, s.state])).toEqual([['vendor/x', 'unmapped']])
     await expect(updateSubmodules(host, ['vendor/x'])).rejects.toThrow(/no .gitmodules entry/)
+  })
+
+  it('adds, syncs and removes a submodule', async () => {
+    const host = join(root, 'host-admin')
+    mkdirSync(host)
+    at(host, 'init', '-q', '-b', 'main')
+    at(host, 'commit', '-q', '--allow-empty', '-m', 'host')
+    await addSubmodule(host, join(root, 'lib'), 'vendor/lib')
+    expect((await listSubmodules(host)).map((s) => [s.path, s.state])).toEqual([['vendor/lib', 'ok']])
+    expect(readFileSync(join(host, '.gitmodules'), 'utf8')).toContain('path = vendor/lib')
+    at(host, 'commit', '-q', '-m', 'add lib')
+    at(host, 'config', 'submodule.vendor/lib.url', '/somewhere/else')
+    await syncSubmodules(host)
+    expect(at(host, 'config', 'submodule.vendor/lib.url')).toBe(join(root, 'lib'))
+    await removeSubmodule(host, 'vendor/lib')
+    expect(await listSubmodules(host)).toEqual([])
+    expect(existsSync(join(host, 'vendor', 'lib'))).toBe(false)
+    // just added (not committed yet): removing undoes the add
+    await addSubmodule(host, join(root, 'lib'), 'fresh')
+    await removeSubmodule(host, 'fresh')
+    expect(await listSubmodules(host)).toEqual([])
+    // local changes inside: refused, nothing lost
+    await addSubmodule(host, join(root, 'lib'), 'busy')
+    writeFileSync(join(host, 'busy', 'work.txt'), 'unsaved\n')
+    await expect(removeSubmodule(host, 'busy')).rejects.toThrow(/local changes/)
+    expect(existsSync(join(host, 'busy', 'work.txt'))).toBe(true)
+    await expect(addSubmodule(host, '--upload-pack=touch /tmp/x', 'evil')).rejects.toThrow(/invalid/)
+    await expect(addSubmodule(host, join(root, 'lib'), '../outside')).rejects.toThrow(/invalid/)
   })
 
   it('returns no submodules for a repository without any', async () => {

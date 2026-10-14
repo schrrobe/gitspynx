@@ -110,11 +110,17 @@ async function submoduleMenu(s: Submodule) {
       : { id: 'update', label: initialized ? 'Aktualisieren' : 'Initialisieren', enabled: !repo.busy },
     { id: 'open', label: 'Als Tab öffnen', enabled: initialized },
     { separator: true },
-    { id: 'all', label: 'Alle Submodule aktualisieren', enabled: !repo.busy }
+    { id: 'all', label: 'Alle Submodule aktualisieren', enabled: !repo.busy },
+    { id: 'sync', label: 'URLs aus .gitmodules übernehmen', enabled: !repo.busy },
+    { id: 'add', label: 'Submodul hinzufügen…', enabled: !repo.busy },
+    ...(s.parent || s.state === 'unmapped' ? [] : [{ separator: true as const }, { id: 'remove', label: 'Entfernen…', enabled: !repo.busy }])
   ])
   if (id === 'update') repo.updateSubmodules([path])
   else if (id === 'open') tabs.openPath(subPath(path))
   else if (id === 'all') repo.updateSubmodules()
+  else if (id === 'sync') repo.syncSubmodules()
+  else if (id === 'add') repo.addSubmodule()
+  else if (id === 'remove') repo.removeSubmodule(path)
 }
 
 async function lfsMenu(pattern: string) {
