@@ -8,9 +8,10 @@ export interface Settings {
   pullMode: PullMode // what the Pull button does
   keymap: Record<string, string> // command id -> combo, overrides the defaults
   graphWidth: number | null // graph column in px; null = automatic
+  terminalHeight: number // px
 }
 
-export const DEFAULT_SETTINGS: Settings = { version: 1, theme: 'system', zoom: 1, pullMode: 'ff-only', keymap: {}, graphWidth: null }
+export const DEFAULT_SETTINGS: Settings = { version: 1, theme: 'system', zoom: 1, pullMode: 'ff-only', keymap: {}, graphWidth: null, terminalHeight: 260 }
 
 const oneOf = <T extends string>(v: unknown, options: readonly T[], fallback: T): T =>
   options.includes(v as T) ? (v as T) : fallback
@@ -29,6 +30,7 @@ export function parseSettings(raw: unknown): Settings {
     zoom,
     pullMode: oneOf(r.pullMode, ['ff-only', 'rebase', 'merge'] as const, DEFAULT_SETTINGS.pullMode),
     keymap,
-    graphWidth: typeof r.graphWidth === 'number' && Number.isFinite(r.graphWidth) ? Math.min(4000, Math.max(28, Math.round(r.graphWidth))) : null
+    graphWidth: typeof r.graphWidth === 'number' && Number.isFinite(r.graphWidth) ? Math.min(4000, Math.max(28, Math.round(r.graphWidth))) : null,
+    terminalHeight: typeof r.terminalHeight === 'number' && Number.isFinite(r.terminalHeight) ? Math.min(2000, Math.max(120, Math.round(r.terminalHeight))) : 260
   }
 }

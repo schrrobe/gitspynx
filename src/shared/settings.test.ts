@@ -24,6 +24,13 @@ describe('parseSettings', () => {
     expect(parseSettings({ theme: 'light' })).toMatchObject({ version: DEFAULT_SETTINGS.version, theme: 'light' })
   })
 
+  it('reads the terminal height within sane bounds', () => {
+    expect(parseSettings({}).terminalHeight).toBe(260)
+    expect(parseSettings({ terminalHeight: 400 }).terminalHeight).toBe(400)
+    expect(parseSettings({ terminalHeight: 20 }).terminalHeight).toBe(120)
+    expect(parseSettings({ terminalHeight: 'tall' }).terminalHeight).toBe(260)
+  })
+
   it('reads the graph column width, or leaves it automatic', () => {
     expect(parseSettings({}).graphWidth).toBeNull()
     expect(parseSettings({ graphWidth: 300 }).graphWidth).toBe(300)
