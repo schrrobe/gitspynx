@@ -24,7 +24,11 @@ Alle Meilensteine **M0–M10** der Roadmap sind umgesetzt (Branch `feat/m0-m1-sc
 ### Für ein Release
 
 - [x] **1. Installer und Packaging** – electron-builder (`npm run dist`): dmg/zip (macOS), NSIS (Windows), AppImage/deb (Linux). Der Workflow „Package" baut alle drei und startet die gepackte App mit einem Smoke-Test (`tools/smoke.cjs`: Repo öffnen, Graph, Terminal).
-  - [ ] Signierung und Notarisierung – braucht ein Apple-Developer-ID-Zertifikat und ein Windows-Codesigning-Zertifikat (`CSC_LINK`, `APPLE_ID` …); bis dahin unsigniert (macOS: Rechtsklick → Öffnen)
+  - [x] macOS ohne Zertifikat ad-hoc signiert (vorher meldete macOS eine heruntergeladene App als „beschädigt"); der Workflow prüft die Signatur mit `codesign --verify --deep --strict`
+  - [x] macOS als Universal-Build (Apple Silicon und Intel; im Workflow auch unter Rosetta getestet), Windows für x64 und ARM
+  - [x] Signierung vorbereitet: mit den Secrets aus der README signiert der Workflow (macOS inkl. Notarisierung; Windows per Zertifikat oder Azure Trusted Signing)
+  - [ ] Zertifikate selbst (Apple Developer ID, Windows-Codesigning) – bis dahin die Warnung beim ersten Start (Anleitung in der README)
+  - [ ] Linux auf ARM (bräuchte einen ARM-Runner, node-pty wird dort aus dem Quellcode gebaut)
   - [x] Eigenes App-Icon (`build/icon.svg`, als 1024-px-PNG gerendert; electron-builder erzeugt .icns/.ico)
   - [x] Veröffentlichung: ein gepushter Tag `v*` lädt die Installer aller Systeme in einen GitHub-Release-**Entwurf**, der von Hand freigegeben wird
   - [ ] Auto-Update – sinnvoll erst mit Signierung (macOS lässt unsignierte Updates nicht zu) und veröffentlichten Releases
