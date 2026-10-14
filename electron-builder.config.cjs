@@ -8,6 +8,10 @@
 //   AZURE_TENANT_ID / AZURE_CLIENT_ID / AZURE_CLIENT_SECRET credentials). Otherwise unsigned
 //   (SmartScreen: "More info" → "Run anyway").
 const env = process.env
+// CI passes every signing variable, empty when its secret does not exist; electron-builder would
+// read an empty CSC_LINK as a path. Empty ones are removed (this file runs in the builder process).
+for (const key of ['CSC_LINK', 'CSC_KEY_PASSWORD', 'CSC_NAME', 'WIN_CSC_LINK', 'WIN_CSC_KEY_PASSWORD', 'APPLE_ID', 'APPLE_APP_SPECIFIC_PASSWORD', 'APPLE_TEAM_ID', 'AZURE_TENANT_ID', 'AZURE_CLIENT_ID', 'AZURE_CLIENT_SECRET'])
+  if (env[key] === '') delete env[key]
 const macCertificate = !!(env.CSC_LINK || env.CSC_NAME)
 const azure = env.AZURE_TRUSTED_SIGNING_ENDPOINT && env.AZURE_TRUSTED_SIGNING_ACCOUNT && env.AZURE_TRUSTED_SIGNING_PROFILE && env.AZURE_TRUSTED_SIGNING_PUBLISHER
 
