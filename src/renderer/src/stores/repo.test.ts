@@ -868,12 +868,24 @@ describe('repo store', () => {
     it('records a rebase finished via Continue and undoes it back to where it started', async () => {
       const repo = await opened()
       repo.info = { ...repo.info!, operation: 'rebase' }
-      w().gitspynx.readRebaseState = async () => ({ branch: 'main', origHead: 'o1' })
-      w().gitspynx.continueOperation = async () => ((head = 'n1'), 'ok')
+      let done = false // after Continue git has no rebase state any more
+      w().gitspynx.readRebaseState = async () => (done ? null : { branch: 'main', origHead: 'o1' })
+      w().gitspynx.continueOperation = async () => ((head = 'n1'), (done = true), 'ok')
       await repo.continueOp()
       expect(repo.undoLabel).toBe('Rebase abschließen')
       await repo.undo()
       expect(applied.at(-1)).toEqual([{ type: 'reset', expect: 'n1', to: 'o1', mode: 'keep', branch: 'main' }])
+    })
+
+    it('records the finished rebase even when the shown state still says rebase (watcher reload in between)', async () => {
+      const repo = await opened()
+      repo.info = { ...repo.info!, operation: 'rebase' }
+      let done = false
+      w().gitspynx.readRebaseState = async () => (done ? null : { branch: 'main', origHead: 'o1' })
+      w().gitspynx.continueOperation = async () => ((head = 'n1'), (done = true), 'ok')
+      w().gitspynx.openRepo = async () => ({ ...info, head: { branch: 'main', sha: head }, operation: 'rebase' }) // stale view
+      await repo.continueOp()
+      expect(repo.undoLabel).toBe('Rebase abschließen')
     })
 
     it('asks before undoing a commit that is already pushed', async () => {

@@ -585,7 +585,9 @@ export const useRepo = defineStore('repo', () => {
     if (op !== 'rebase' || !path) return integrate((r) => window.gitspynx.continueOperation(r), op ? `${OP_NAMES[op]} abschließen` : undefined)
     const start = await window.gitspynx.readRebaseState(path).catch(() => null)
     const conflicted = await integrate((r) => window.gitspynx.continueOperation(r))
-    if (conflicted || !start || info.value?.path !== path || info.value.operation) return conflicted
+    if (conflicted || !start || info.value?.path !== path) return conflicted
+    // asked from git, not from the shown state: a watcher reload can still show the rebase
+    if (await window.gitspynx.readRebaseState(path).catch(() => start)) return conflicted // still running (stopped again)
     const now = await gitHead(path)
     if (now.branch === start.branch && now.sha && now.sha !== start.origHead)
       record(path, {
