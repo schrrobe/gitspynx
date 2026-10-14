@@ -328,6 +328,21 @@ export const useRepo = defineStore('repo', () => {
       notice.value = 'Rebase angehalten zum Bearbeiten: Änderungen vornehmen (z. B. „Letzten Commit ändern"), dann „Fortsetzen".'
   }
 
+  // Discards hunks/lines of the open unstaged diff after one confirmation; bottom-up like staging
+  // (the headers of the hunks above stay valid).
+  async function discardHunks(sels: Omit<HunkSelection, 'path' | 'staged'>[]) {
+    const t = diffTarget.value
+    if (busy.value || !info.value || !t || 'sha' in t || t.staged || !sels.length) return
+    const lines = sels.reduce((n, s) => n + (s.lines?.length ?? 0), 0)
+    const what = sels.some((s) => !s.lines) ? (sels.length === 1 ? 'diesen Hunk' : `${sels.length} Hunks`) : `${lines} ${lines === 1 ? 'Zeile' : 'Zeilen'}`
+    if (!(await window.gitspynx.confirm(`${what} in „${t.path}“ verwerfen?`, 'Die Änderungen im Arbeitsverzeichnis gehen verloren; das lässt sich nicht rückgängig machen.', 'Verwerfen'))) return
+    const path = info.value.path
+    await guard(async () => {
+      for (const sel of [...sels].sort((a, b) => b.hunk - a.hunk)) await window.gitspynx.discardHunk(path, { ...sel, path: t.path, staged: false })
+    })
+    await refreshStatus()
+  }
+
   const stageHunk = (sel: Omit<HunkSelection, 'path' | 'staged'>) =>
     guard(async () => {
       const t = diffTarget.value
@@ -761,6 +776,6 @@ export const useRepo = defineStore('repo', () => {
     graph, refsBySha, open, refresh, loadMore, select, refreshStatus, openDiff, closeDiff, stage, unstage, commit, close,
     checkoutBranch, createBranch, renameBranch, deleteBranch, busy, fetchAll, pullBranch, pushBranch, deleteRemoteBranch,
     conflict, mergeInto, rebaseOnto, cherryPick, revertCommit, continueOp, skipOp, abortOp, openConflict, resolve,
-    stash, applyStash, popLatestStash, dropStash, stageHunk, addWorktree, removeWorktree, pruneWorktrees, updateSubmodules, lfsTrack, lfsUntrack, lfsPull, undo, redo, undoLabel, redoLabel, rebasePlan, openRebasePlan, startRebase, hidden, solo, toggleHidden, toggleSolo, resetFilters, loadAll, revFor, backgroundErrors, forget
+    stash, applyStash, popLatestStash, dropStash, stageHunk, discardHunks, addWorktree, removeWorktree, pruneWorktrees, updateSubmodules, lfsTrack, lfsUntrack, lfsPull, undo, redo, undoLabel, redoLabel, rebasePlan, openRebasePlan, startRebase, hidden, solo, toggleHidden, toggleSolo, resetFilters, loadAll, revFor, backgroundErrors, forget
   }
 })

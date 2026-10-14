@@ -387,6 +387,20 @@ describe('repo store', () => {
       expect(repo.notice).toMatch(/update = none/)
     })
 
+    it('discards hunks after confirming, bottom-up, and not without confirmation', async () => {
+      const { repo, w } = await opened()
+      const sent: number[] = []
+      w.gitspynx.readFileDiff = async () => ({ binary: false, header: [], hunks: [] })
+      w.gitspynx.discardHunk = async (_r: string, sel: { hunk: number }) => void sent.push(sel.hunk)
+      await repo.openDiff({ path: 'f.txt', staged: false })
+      w.gitspynx.confirm = async () => false
+      await repo.discardHunks([{ hunk: 0, hunkHeader: 'a', hunkLines: 'x' }])
+      expect(sent).toEqual([])
+      w.gitspynx.confirm = async () => true
+      await repo.discardHunks([{ hunk: 0, hunkHeader: 'a', hunkLines: 'x', lines: [1] }, { hunk: 2, hunkHeader: 'b', hunkLines: 'y', lines: [0] }])
+      expect(sent).toEqual([2, 0])
+    })
+
     it('asks before pruning worktrees', async () => {
       const { repo, w } = await opened()
       let pruned = false

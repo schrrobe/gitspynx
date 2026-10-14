@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { revert, rebaseState, setIdleHold, assertNewWorktreeBranch,
+import { discardHunk, revert, rebaseState, setIdleHold, assertNewWorktreeBranch,
   abortOperation,
   lfsInfo,
   lfsTrack,
@@ -861,6 +861,24 @@ describe('hunk and line staging', () => {
   })
   afterAll(() => rmSync(hd, { recursive: true, force: true }))
   const reset = () => h('reset', '-q', '--hard')
+
+  it('discards a hunk or selected lines in the working tree, leaving the index alone', async () => {
+    reset()
+    writeFileSync(join(hd, 'f.txt'), lines(30, (i) => (i === 1 ? 'A1\nA2' : i === 25 ? 'Z' : null)))
+    h('add', 'f.txt')
+    writeFileSync(join(hd, 'f.txt'), lines(30, (i) => (i === 1 ? 'A1\nA2\nA3' : i === 25 ? 'Z\nZZ' : null)))
+    const diff = await readFileDiff(hd, { path: 'f.txt', staged: false })
+    const [top, bottom] = diff.hunks
+    // second hunk completely, first hunk only its added "A3"
+    await discardHunk(hd, { path: 'f.txt', staged: false, hunk: 1, hunkHeader: bottom.header, hunkLines: hunkKey(bottom) })
+    const again = (await readFileDiff(hd, { path: 'f.txt', staged: false })).hunks[0]
+    const a3 = again.lines.findIndex((l) => l.text === 'A3')
+    await discardHunk(hd, { path: 'f.txt', staged: false, hunk: 0, hunkHeader: again.header, hunkLines: hunkKey(again), lines: [a3] })
+    expect(readFileSync(join(hd, 'f.txt'), 'utf8')).toBe(lines(30, (i) => (i === 1 ? 'A1\nA2' : i === 25 ? 'Z' : null)))
+    expect(h('diff', '--cached', '--stat')).toContain('f.txt') // staged change untouched
+    expect(top).toBeTruthy()
+    await expect(discardHunk(hd, { path: 'f.txt', staged: true, hunk: 0, hunkHeader: '', hunkLines: '' })).rejects.toThrow(/working tree/)
+  })
 
   it('stages one of two hunks', async () => {
     writeFileSync(join(hd, 'f.txt'), lines(30, (i) => (i === 1 ? 'CHANGED 1' : i === 25 ? 'CHANGED 25' : null)))

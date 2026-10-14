@@ -21,6 +21,7 @@ const methods: (keyof GitspynxApi)[] = [
   'unstage',
   'readFileDiff',
   'stageHunk',
+  'discardHunk',
   'readRebasePlan',
   'interactiveRebase',
   'applyUndo',

@@ -539,6 +539,24 @@ export async function stashDrop(repo: string, sha: string): Promise<void> {
 // Stages (from the unstaged diff) or unstages (from the staged diff, applied in reverse) one hunk
 // or some of its lines. The patch is rebuilt here from the current diff; the renderer only names
 // the hunk, and a changed hunk header means the user looked at an outdated diff.
+// Throws away a hunk (or selected lines of it) of the unstaged diff in the working tree. The
+// patch keeps the working-tree side (like unstaging) and is applied in reverse to the files.
+export async function discardHunk(repo: string, sel: HunkSelection): Promise<void> {
+  if (sel.staged) throw new GitError('only changes in the working tree can be discarded')
+  if (!(await run([LITERAL, 'ls-files', '--', sel.path], repo)).stdout) throw new GitError('untracked files are discarded by deleting them')
+  const diff = await readFileDiff(repo, { path: sel.path, staged: false })
+  const hunk = diff.hunks[sel.hunk]
+  if (!hunk || hunk.header !== sel.hunkHeader || hunkKey(hunk) !== sel.hunkLines) throw new GitError('the diff changed meanwhile — please review it again')
+  if (sel.lines && diff.header.some((h) => /^(new|deleted) file mode/.test(h))) throw new GitError('added or deleted files can only be discarded as a whole')
+  let patch: string
+  try {
+    patch = buildPatch(diff, sel.hunk, sel.lines, true)
+  } catch (e) {
+    throw new GitError((e as Error).message)
+  }
+  await run(['apply', '--reverse', '--recount', '-'], repo, [0], patch)
+}
+
 export async function stageHunk(repo: string, sel: HunkSelection): Promise<void> {
   if (!sel.staged && !(await run([LITERAL, 'ls-files', '--', sel.path], repo)).stdout)
     throw new GitError('untracked files can only be staged as a whole')

@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process'
 import { readFile, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { type DiffTarget, type GitspynxApi, type HunkSelection, type RebaseStep, type UndoStep, MAX_LOG_PAGE, type MenuItem, type RepoChange, type Resolution, type Session } from '../shared/types'
-import { revert, rebaseState, setIdleHold, setGitEnv, assertNewWorktreeBranch,
+import { discardHunk, revert, rebaseState, setIdleHold, setGitEnv, assertNewWorktreeBranch,
   abortOperation,
   addWorktree,
   applyUndo,
@@ -330,6 +330,7 @@ const handlers: Handlers = {
   unstage: (_s, repo, p) => unstage(knownRepo(repo), paths(p)),
   readFileDiff: (_s, repo, target) => readFileDiff(knownRepo(repo), diffTarget(target)),
   stageHunk: (_s, repo, sel) => stageHunk(knownRepo(repo), hunkSelection(sel)),
+  discardHunk: (_s, repo, sel) => discardHunk(knownRepo(repo), hunkSelection(sel)),
   readRebasePlan: (_s, repo, base) => readRebasePlan(knownRepo(repo), str(base)),
   interactiveRebase: (_s, repo, base, steps) => interactiveRebase(knownRepo(repo), str(base), rebaseSteps(steps)),
   applyUndo: (_s, repo, steps) => applyUndo(knownRepo(repo), undoSteps(steps)),

@@ -105,6 +105,7 @@ export interface GitspynxApi {
   unstage(repo: string, paths: string[]): Promise<void>
   readFileDiff(repo: string, target: DiffTarget): Promise<FileDiff>
   stageHunk(repo: string, selection: HunkSelection): Promise<void>
+  discardHunk(repo: string, selection: HunkSelection): Promise<void> // working tree only, cannot be undone
   readRebasePlan(repo: string, base: string): Promise<RebaseCommit[]>
   interactiveRebase(repo: string, base: string, steps: RebaseStep[]): Promise<'ok' | 'conflicts'>
   applyUndo(repo: string, steps: UndoStep[]): Promise<void>

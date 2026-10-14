@@ -88,6 +88,15 @@ function onBodyKey(e: KeyboardEvent) {
   e.stopPropagation()
 }
 
+const selectionAsHunks = () => {
+  const d = repo.diff!
+  return [...selection.value].map(([hunk, lines]) => ({ hunk, hunkHeader: d.hunks[hunk].header, hunkLines: hunkKey(d.hunks[hunk]), lines: [...lines] }))
+}
+function discardHunk(hunk: number) {
+  const h = repo.diff!.hunks[hunk]
+  void repo.discardHunks([{ hunk, hunkHeader: h.header, hunkLines: hunkKey(h) }])
+}
+
 function stageHunk(hunk: number) {
   const h = repo.diff!.hunks[hunk]
   repo.stageHunk({ hunk, hunkHeader: h.header, hunkLines: hunkKey(h) })
@@ -131,6 +140,7 @@ onUnmounted(() => {
       <div v-if="lineSelectable && selectedCount" class="selbar">
         <span>{{ selectedCount }} {{ selectedCount === 1 ? 'Zeile' : 'Zeilen' }} markiert</span>
         <button :disabled="!!repo.busy" @click="stageSelected">{{ staged ? 'Markierte unstagen' : 'Markierte stagen' }} (Enter)</button>
+        <button v-if="!staged" class="danger" :disabled="!!repo.busy" @click="repo.discardHunks(selectionAsHunks())">Markierte verwerfen…</button>
         <button @click="selection = new Map()">Auswahl aufheben</button>
       </div>
       <div
@@ -147,6 +157,7 @@ onUnmounted(() => {
           <template v-for="r in rows" :key="`${r.hunk}:${r.line}`">
             <div v-if="r.line < 0" class="hunk" :style="{ top: `${r.top}px` }">
               <span class="dim">{{ repo.diff.hunks[r.hunk].header }}</span>
+              <button v-if="stageable && !staged" class="danger" :disabled="!!repo.busy" title="Änderungen dieses Hunks im Arbeitsverzeichnis verwerfen" @click="discardHunk(r.hunk)">Verwerfen…</button>
               <button v-if="stageable" :disabled="!!repo.busy" @click="stageHunk(r.hunk)">{{ staged ? 'Hunk unstagen' : 'Hunk stagen' }}</button>
             </div>
             <div
@@ -190,6 +201,7 @@ header strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; 
 .line.pickable { cursor: pointer; }
 .selbar { display: flex; align-items: center; gap: 8px; padding: 4px 8px; background: var(--bg-selected); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
 .selbar span { flex: 1; }
+.danger:hover:not(:disabled) { border-color: var(--danger); color: var(--danger); }
 .body:focus { outline: none; }
 .body:focus .line.cursor { outline: 1px dashed var(--accent); outline-offset: -1px; }
 .line.picked { box-shadow: inset 3px 0 0 var(--accent); filter: brightness(1.12); }
