@@ -63,16 +63,16 @@ Alle Meilensteine **M0–M10** der Roadmap sind umgesetzt (Branch `feat/m0-m1-sc
 
 ### Weitere offene Punkte
 
-- [ ] 22. SSH-Passphrase über die eigene Abfrage (`SSH_ASKPASS`) E2E prüfen
-- [ ] 23. Passwortabfrage in der gepackten App auf allen drei Systemen prüfen (Smoke-Test)
-- [ ] 24. `git revert` aus der Oberfläche
-- [ ] 25. Hunk bzw. Zeilen im Arbeitsverzeichnis verwerfen
-- [ ] 26. Inhaltssuche in der Historie (`git log -S` / `-G`)
-- [ ] 27. Terminal: Höhe verstellbar, mehrere Shells je Repo
-- [ ] 28. Worktrees sperren, entsperren und verschieben
-- [ ] 29. Submodule hinzufügen, entfernen und synchronisieren
-- [ ] 30. E2E-Treiber ins Repo und in die CI (alle drei Systeme)
-- [ ] 31. AltGr unter Windows prüfen
+- [x] 22. SSH-Passphrase über die eigene Abfrage: Test mit `ssh-add` und eigenem `ssh-agent` (gleicher `SSH_ASKPASS`-Weg wie ssh beim Git-Transfer; ein echter Push über SSH bleibt mangels Server ungetestet; auf Windows übersprungen)
+- [x] 23. Passwortabfrage in der gepackten App: der Smoke-Test holt auf Linux, macOS und Windows von einem lokalen, passwortgeschützten HTTP-Remote
+- [x] 24. `git revert` aus dem Kontextmenü eines Commits (auch für den neuesten), mit Undo; Konflikte über die Operationsleiste
+- [x] 25. Hunk oder markierte Zeilen im Arbeitsverzeichnis verwerfen (mit Rückfrage; Index unberührt)
+- [x] 26. Inhaltssuche: Suchleiste schaltet auf „Code (Änderungen)" um (`git log -S`, `re:` für `-G`); bis 5 min, eine neue Suche bricht die alte ab; Partial Clones werden abgelehnt. git/git (82k Commits): 17 s Text, 36 s Regex. Dabei „Alle laden" ohne commit-graph von 35 s auf 2,6 s beschleunigt (große Seiten)
+- [x] 27. Terminal: Höhe per Griff (gespeichert), mehrere Shells je Repo (Leiste mit +, ×)
+- [x] 28. Worktrees sperren, entsperren und verschieben (Ziel im Speichern-Dialog von main)
+- [x] 29. Submodule hinzufügen (URL/Pfad geprüft), entfernen (nicht bei lokalen Änderungen) und URLs synchronisieren
+- [x] 30. E2E: neun Szenarien in `e2e/` (Playwright), Workflow „E2E" auf Linux, macOS und Windows
+- [ ] 31. AltGr unter Windows – nur an einem echten Windows-Rechner prüfbar. Prüfung: deutsches Layout, in Einstellungen → Tastenkürzel ein Feld anklicken und AltGr+Q drücken: es muss „@" erscheinen (nicht „Ctrl+Alt+@"); danach Strg+Alt+K (linke Tasten) drücken: es muss „Ctrl+Alt+K" erscheinen
 
 ### Bewusst in Kauf genommen
 
