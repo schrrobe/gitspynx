@@ -1448,7 +1448,7 @@ describe('submodules', () => {
     expect(existsSync(join(host, 'busy', 'work.txt'))).toBe(true)
     await expect(addSubmodule(host, '--upload-pack=touch /tmp/x', 'evil')).rejects.toThrow(/invalid/)
     await expect(addSubmodule(host, join(root, 'lib'), '../outside')).rejects.toThrow(/invalid/)
-  })
+  }, 30_000) // clones several submodules; slow on Windows runners
 
   it('returns no submodules for a repository without any', async () => {
     expect(await listSubmodules(join(root, 'lib'))).toEqual([])
