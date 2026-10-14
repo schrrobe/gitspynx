@@ -203,7 +203,7 @@ onUnmounted(() => {
       @pointerdown.prevent="startResize"
       @keydown="resizeKey"
     />
-    <div class="bar" role="tablist" aria-label="Shells">
+    <div class="shellbar" role="tablist" aria-label="Shells">
       <span v-for="(s, i) in bar?.list ?? []" :key="s.label" class="shell" :class="{ active: i === bar?.active }">
         <button role="tab" :aria-selected="i === bar?.active" @click="selectShell(i)">Shell {{ s.label }}</button>
         <button class="close" :aria-label="`Shell ${s.label} schließen`" title="Shell beenden" @click="closeShell(i)">×</button>
@@ -218,13 +218,13 @@ onUnmounted(() => {
 .terminal { grid-area: term; position: relative; display: flex; flex-direction: column; border-top: 1px solid var(--border); background: #111317; min-width: 0; }
 .resize { position: absolute; top: -3px; left: 0; right: 0; height: 6px; cursor: row-resize; z-index: 1; }
 .resize:hover, .resize:focus-visible { background: color-mix(in srgb, var(--accent) 45%, transparent); outline: none; }
-.bar { display: flex; align-items: center; gap: 2px; padding: 3px 6px 0; flex: none; }
+.shellbar { display: flex; align-items: center; gap: 2px; padding: 3px 6px 0; flex: none; }
 .shell { display: flex; align-items: center; border-radius: 5px 5px 0 0; color: #9aa3b2; }
 .shell.active { background: #1c1f26; color: #d7dae0; }
-.bar button { border: 0; background: none; color: inherit; font-size: 12px; padding: 2px 8px; }
+.shellbar button { border: 0; background: none; color: inherit; font-size: 12px; padding: 2px 8px; }
 .shell .close { padding: 2px 6px 2px 0; }
 .shell .close:hover { color: var(--danger); }
-.bar .add { color: #9aa3b2; }
+.shellbar .add { color: #9aa3b2; }
 .host { flex: 1; min-height: 0; padding: 4px 0 0 8px; }
 .host :deep(.session) { height: 100%; }
 </style>

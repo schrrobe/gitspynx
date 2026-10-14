@@ -116,8 +116,9 @@ npm test            # Vitest: Unit + Integration gegen temporäre git-Repos
 npm run typecheck   # vue-tsc strict
 npm run lint        # ESLint
 npm run build       # electron-vite
+npm run e2e         # E2E-Szenarien gegen die gebaute App (npm run build vorher)
 npm run dist        # Installer für das eigene System nach dist/
 node tools/smoke.cjs <gepackte App>   # Smoke-Test der gepackten App
 ```
 
-CI (GitHub Actions) führt Tests, Typprüfung und ESLint bei jedem Push auf Linux, macOS und Windows aus; der Workflow „Package" baut bei jedem PR die Installer aller drei Systeme und startet sie mit dem Smoke-Test. Die E2E-Treiber (Playwright `_electron`) für M1–M10 wurden während der Entwicklung lokal ausgeführt und sind noch nicht Teil des Repos.
+CI (GitHub Actions) führt Tests, Typprüfung und ESLint bei jedem Push auf Linux, macOS und Windows aus; der Workflow „Package" baut bei jedem PR die Installer aller drei Systeme und startet sie mit dem Smoke-Test. Der Workflow „E2E" führt die Szenarien in `e2e/scenarios` (Playwright `_electron`) bei jedem PR auf allen drei Systemen aus.
