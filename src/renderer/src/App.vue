@@ -6,7 +6,8 @@ import CommitDetail from './components/CommitDetail.vue'
 import SettingsDialog from './components/SettingsDialog.vue'
 import { comboFromEvent, resolveKeymap } from './keymap'
 import { useSettings } from './stores/settings'
-import { settingsOpen, terminalOpen } from './ui'
+import { focusSearchRequest, paletteOpen, settingsOpen, terminalOpen } from './ui'
+import Icon from './components/Icon.vue'
 import ConflictView from './components/ConflictView.vue'
 import CommitList from './components/CommitList.vue'
 import DiffView from './components/DiffView.vue'
@@ -72,14 +73,50 @@ onUnmounted(stopAskpass)
 
 const headRef = computed(() => repo.info?.refs.find((r) => r.kind === 'local' && r.name === repo.info?.head.branch))
 
+// Pull's ▾ menu (as in GitKraken): fetch, the three pull modes, and which one the button uses.
 async function pullMenu() {
-  const mode = await window.gitspynx.showContextMenu([
+  const current = settings.settings.pullMode
+  const id = await window.gitspynx.showContextMenu([
+    { id: 'fetch', label: 'Fetch (alle Remotes)' },
+    { separator: true },
     { id: 'ff-only', label: 'Pull (nur Fast-Forward)' },
     { id: 'rebase', label: 'Pull mit Rebase' },
-    { id: 'merge', label: 'Pull mit Merge' }
+    { id: 'merge', label: 'Pull mit Merge' },
+    { separator: true },
+    { id: 'default:ff-only', label: `${current === 'ff-only' ? '✓ ' : ''}Standard: nur Fast-Forward` },
+    { id: 'default:rebase', label: `${current === 'rebase' ? '✓ ' : ''}Standard: Rebase` },
+    { id: 'default:merge', label: `${current === 'merge' ? '✓ ' : ''}Standard: Merge` }
   ])
-  if (mode) repo.pullBranch(mode as 'ff-only' | 'rebase' | 'merge')
+  if (id === 'fetch') repo.fetchAll()
+  else if (id?.startsWith('default:')) settings.save({ pullMode: id.slice(8) as 'ff-only' })
+  else if (id) repo.pullBranch(id as 'ff-only' | 'rebase' | 'merge')
 }
+
+// Repository and branch pickers at the left of the toolbar.
+async function repoMenu() {
+  const others = tabs.tabs.filter((p) => p !== repo.info?.path)
+  const id = await window.gitspynx.showContextMenu([
+    ...others.map((p) => ({ id: `tab:${p}`, label: p.split(/[\\/]/).pop() ?? p })),
+    ...(others.length ? [{ separator: true as const }] : []),
+    { id: 'open', label: 'Repository öffnen…' },
+    { id: 'close', label: 'Repository schließen' }
+  ])
+  if (id?.startsWith('tab:')) tabs.activate(tabs.tabs.indexOf(id.slice(4)))
+  else if (id === 'open') pick()
+  else if (id === 'close') closeRepo()
+}
+async function branchMenu() {
+  const head = repo.info?.head.branch
+  const local = (repo.info?.refs ?? []).filter((r) => r.kind === 'local')
+  const id = await window.gitspynx.showContextMenu([
+    ...local.map((r) => ({ id: `co:${r.name}`, label: `${r.name === head ? '✓ ' : ''}${r.name}`, enabled: r.name !== head })),
+    { separator: true },
+    { id: 'new', label: 'Neuer Branch hier…' }
+  ])
+  if (id?.startsWith('co:')) repo.checkoutBranch(id.slice(3))
+  else if (id === 'new' && repo.info?.head.sha) repo.createBranch(repo.info.head.sha)
+}
+const busyLabel = (kind: string, label: string) => (repo.busy === kind ? `${label}…` : label)
 
 async function stashWithMessage() {
   const message = await ask('Stash-Nachricht', '', 'Stashen')
@@ -134,33 +171,51 @@ async function deleteWorkspace(name: string) {
   <div v-else class="shell">
     <TabStrip @add="pick" />
     <header class="toolbar">
-      <strong>{{ repo.info.path.split('/').pop() }}</strong>
-      <span class="dim">{{ repo.info.head.branch ?? 'detached HEAD' }}</span>
-      <span class="spacer" />
-      <span v-if="repo.error" class="error" role="alert">{{ repo.error }}</span>
-      <span v-else-if="repo.notice" class="notice" role="status">{{ repo.notice }}</span>
-      <div class="group" role="group" aria-label="Verlauf">
-        <button :disabled="!!repo.busy || repo.undoing || !!repo.info.operation || !repo.undoLabel" :title="repo.undoLabel ? `Rückgängig: ${repo.undoLabel}` : 'Nichts rückgängig zu machen'" aria-label="Rückgängig" @click="repo.undo()">↶</button>
-        <button :disabled="!!repo.busy || repo.undoing || !!repo.info.operation || !repo.redoLabel" :title="repo.redoLabel ? `Wiederholen: ${repo.redoLabel}` : 'Nichts zu wiederholen'" aria-label="Wiederholen" @click="repo.redo()">↷</button>
-      </div>
-      <div class="group" role="group" aria-label="Remote">
-        <button :disabled="!!repo.busy" @click="repo.fetchAll()">{{ repo.busy === 'fetch' ? 'Fetch…' : 'Fetch' }}</button>
-        <button :disabled="!!repo.busy || !repo.info.head.branch" title="Rechtsklick: Pull-Modus wählen" @click="repo.pullBranch(settings.settings.pullMode)" @contextmenu.prevent="pullMenu">
-          {{ repo.busy === 'pull' ? 'Pull…' : 'Pull' }}<span v-if="headRef?.behind" class="count"> ↓{{ headRef.behind }}</span>
+      <div class="where">
+        <button class="picker" title="Repository wechseln, öffnen, schließen" @click="repoMenu">
+          <span class="caption">repository</span>
+          <span class="value">{{ repo.info.path.split(/[\\/]/).pop() }}<Icon name="chevron" :size="14" /></span>
         </button>
-        <button :disabled="!!repo.busy || !repo.info.head.branch" @click="repo.pushBranch()">
-          {{ repo.busy === 'push' ? 'Push…' : 'Push' }}<span v-if="headRef?.ahead" class="count"> ↑{{ headRef.ahead }}</span>
+        <Icon name="chevron-right" :size="16" class="dim" />
+        <button class="picker" title="Branch wechseln" @click="branchMenu">
+          <span class="caption">branch</span>
+          <span class="value branch-name">{{ repo.info.head.branch ?? 'detached HEAD' }}<Icon name="chevron" :size="14" /></span>
         </button>
       </div>
-      <div class="group" role="group" aria-label="Stash">
-        <button :disabled="!!repo.busy || !repo.status.length" title="Rechtsklick: mit Nachricht" @click="repo.stash()" @contextmenu.prevent="stashWithMessage">Stash</button>
-        <button :disabled="!!repo.busy || !repo.info.stashes.length" @click="repo.popLatestStash()">Pop</button>
+      <div class="tools">
+        <button class="tool" :disabled="!!repo.busy || repo.undoing || !!repo.info.operation || !repo.undoLabel" :title="repo.undoLabel ? `Rückgängig: ${repo.undoLabel}` : 'Nichts rückgängig zu machen'" aria-label="Rückgängig" @click="repo.undo()">
+          <span class="caption">Undo</span><Icon name="undo" :size="20" />
+        </button>
+        <button class="tool" :disabled="!!repo.busy || repo.undoing || !!repo.info.operation || !repo.redoLabel" :title="repo.redoLabel ? `Wiederholen: ${repo.redoLabel}` : 'Nichts zu wiederholen'" aria-label="Wiederholen" @click="repo.redo()">
+          <span class="caption">Redo</span><Icon name="redo" :size="20" />
+        </button>
+        <span class="split">
+          <button class="tool" :disabled="!!repo.busy || !repo.info.head.branch" :title="`Pull (${settings.settings.pullMode === 'ff-only' ? 'nur Fast-Forward' : settings.settings.pullMode === 'rebase' ? 'Rebase' : 'Merge'})`" aria-label="Pull" @click="repo.pullBranch(settings.settings.pullMode)" @contextmenu.prevent="pullMenu">
+            <span class="caption">{{ busyLabel('pull', 'Pull') }}</span><Icon name="pull" :size="20" /><span v-if="headRef?.behind" class="badge">{{ headRef.behind }}</span>
+          </button>
+          <button class="caret" :disabled="!!repo.busy" aria-label="Fetch und Pull-Optionen" title="Fetch und Pull-Optionen" @click="pullMenu"><Icon name="chevron" :size="14" /></button>
+        </span>
+        <button class="tool" :disabled="!!repo.busy || !repo.info.head.branch" aria-label="Push" @click="repo.pushBranch()">
+          <span class="caption">{{ busyLabel('push', 'Push') }}</span><Icon name="push" :size="20" /><span v-if="headRef?.ahead" class="badge">{{ headRef.ahead }}</span>
+        </button>
+        <button class="tool" :disabled="!!repo.busy || !repo.info.head.sha" title="Neuer Branch am aktuellen Commit" aria-label="Branch" @click="repo.createBranch(repo.info.head.sha!)">
+          <span class="caption">Branch</span><Icon name="branch" :size="20" />
+        </button>
+        <button class="tool" :disabled="!!repo.busy || !repo.status.length" title="Stash (Rechtsklick: mit Nachricht)" aria-label="Stash" @click="repo.stash()" @contextmenu.prevent="stashWithMessage">
+          <span class="caption">Stash</span><Icon name="stash" :size="20" />
+        </button>
+        <button class="tool" :disabled="!!repo.busy || !repo.info.stashes.length" aria-label="Pop" @click="repo.popLatestStash()">
+          <span class="caption">Pop</span><Icon name="pop" :size="20" />
+        </button>
+        <span class="divider" />
+        <button class="tool" :class="{ on: terminalOpen }" :aria-pressed="terminalOpen" title="Terminal ein-/ausblenden (Shells laufen weiter)" aria-label="Terminal" @click="terminalOpen = !terminalOpen">
+          <span class="caption">Terminal</span><Icon name="terminal" :size="20" />
+        </button>
       </div>
-      <button :class="{ on: terminalOpen }" :aria-pressed="terminalOpen" title="Terminal ein-/ausblenden (Shells laufen weiter)" @click="terminalOpen = !terminalOpen">Terminal</button>
-      <button @click="repo.refresh()">Aktualisieren</button>
-      <button @click="pick">Öffnen…</button>
-      <button @click="closeRepo">Schließen</button>
-      <button aria-label="Einstellungen" title="Einstellungen" @click="settingsOpen = true">⚙</button>
+      <div class="right">
+        <button class="tool" title="Befehlspalette" aria-label="Actions" @click="paletteOpen = true"><span class="caption">Actions</span><Icon name="actions" :size="20" /></button>
+        <button class="tool" title="Commits suchen" aria-label="Search" @click="focusSearchRequest++"><span class="caption">Search</span><Icon name="search" :size="20" /></button>
+      </div>
     </header>
     <OperationBar />
     <Sidebar class="sidebar" />
@@ -172,6 +227,14 @@ async function deleteWorkspace(name: string) {
     <CommitDetail v-else class="detail" />
     <!-- v-show: hiding the panel keeps the shells running -->
     <TerminalPanel v-show="terminalOpen" :visible="terminalOpen" :pass-key="passKey" />
+    <footer class="statusbar">
+      <span v-if="repo.error" class="error" role="alert">{{ repo.error }}</span>
+      <span v-else-if="repo.notice" class="notice" role="status">{{ repo.notice }}</span>
+      <span v-else-if="repo.busy" class="dim">{{ { fetch: 'Fetch läuft…', pull: 'Pull läuft…', push: 'Push läuft…', submodules: 'Submodule werden aktualisiert…', lfs: 'LFS-Dateien werden geholt…' }[repo.busy] }}</span>
+      <span class="spacer" />
+      <span class="dim">{{ repo.commits.length }}{{ repo.complete ? '' : '+' }} Commits</span>
+      <button class="zoom" title="Zoom (Einstellungen)" @click="settingsOpen = true">{{ Math.round(settings.settings.zoom * 100) }} %</button>
+    </footer>
   </div>
   <PromptDialog />
   <RebaseDialog />
@@ -191,29 +254,42 @@ async function deleteWorkspace(name: string) {
 .welcome .del { border: 0; background: none; padding: 0 6px; color: var(--text-dim); }
 .welcome .del:hover { color: var(--danger); }
 .error { color: var(--danger); }
-.notice { color: var(--lane-1); }
-button.on { border-color: var(--accent); color: var(--accent); }
+.notice { color: var(--lane-7); }
 .shell {
   display: grid;
-  grid-template: 'tabs tabs tabs' auto 'bar bar bar' 44px 'op op op' auto 'side list detail' 1fr 'term term term' auto / 220px 1fr 340px;
+  grid-template: 'tabs tabs tabs' auto 'bar bar bar' auto 'op op op' auto 'side list detail' 1fr 'term term term' auto 'status status status' auto / 260px 1fr 360px;
   height: 100%;
 }
+/* toolbar: pickers left, labelled icon tools in the middle, actions right (GitKraken layout) */
 .toolbar {
   grid-area: bar;
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  gap: 10px;
-  padding: 0 12px;
+  padding: 4px 12px;
   border-bottom: 1px solid var(--border);
-  background: var(--bg-panel);
+  background: var(--bg-toolbar);
 }
+.where { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.picker { display: flex; flex-direction: column; align-items: flex-start; border: 0; background: none; padding: 2px 8px; border-radius: 6px; min-width: 0; }
+.picker:hover { background: var(--bg-hover); }
+.picker .caption, .tool .caption { font-size: 11px; color: var(--text-dim); line-height: 14px; }
+.picker .value { display: flex; align-items: center; gap: 4px; font-size: 15px; font-weight: 600; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tools, .right { display: flex; align-items: center; gap: 2px; }
+.right { justify-content: flex-end; }
+.tool { position: relative; display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 52px; border: 0; background: none; padding: 3px 8px; border-radius: 6px; color: var(--text); }
+.tool:hover:not(:disabled) { background: var(--bg-hover); }
+.tool:disabled { opacity: 0.4; cursor: default; }
+.tool.on { color: var(--accent); }
+.split { display: flex; align-items: flex-end; }
+.caret { border: 0; background: none; padding: 4px 2px; margin-left: -8px; border-radius: 4px; color: var(--text-dim); }
+.caret:hover:not(:disabled) { background: var(--bg-hover); color: var(--text); }
+.badge { position: absolute; top: 14px; right: 6px; min-width: 16px; padding: 0 4px; border-radius: 8px; background: var(--accent); color: #fff; font-size: 10px; line-height: 16px; font-variant-numeric: tabular-nums; }
+.divider { width: 1px; height: 32px; background: var(--border); margin: 0 6px; }
+.statusbar { grid-area: status; display: flex; align-items: center; gap: 12px; height: 24px; padding: 0 10px; background: var(--bg-titlebar); border-top: 1px solid var(--border); font-size: 12px; min-width: 0; }
+.statusbar > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.statusbar .zoom { border: 0; background: none; padding: 0 4px; font-size: 12px; color: var(--text-dim); }
 .spacer { flex: 1; }
-.group { display: flex; }
-.group button { border-radius: 0; margin-left: -1px; }
-.group button:first-child { border-radius: 6px 0 0 6px; margin-left: 0; }
-.group button:last-child { border-radius: 0 6px 6px 0; }
-.group button:hover { position: relative; }
-.count { color: var(--accent); font-variant-numeric: tabular-nums; }
 .sidebar { grid-area: side; }
 .list { grid-area: list; }
 .detail { grid-area: detail; min-height: 0; }

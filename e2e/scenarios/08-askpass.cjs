@@ -13,7 +13,8 @@ module.exports = async () => {
   const s = await launch([r])
   try {
     await openFirstRecent(s.win)
-    await s.win.click('.toolbar button:has-text("Fetch")')
+    await s.pick('Fetch') // in Pull's ▾ menu, as in GitKraken
+    await s.win.click('.toolbar .caret')
     await s.win.waitForSelector('dialog[open] #prompt-input')
     expect(await s.win.getAttribute('#prompt-input', 'type'), 'text', 'user name in clear')
     await s.win.fill('#prompt-input', 'ada')
@@ -21,7 +22,7 @@ module.exports = async () => {
     await s.win.waitForSelector('dialog[open] #prompt-input[type=password]')
     await s.win.fill('#prompt-input', 's3cret')
     await s.win.keyboard.press('Enter')
-    await s.win.waitForSelector('.sidebar .item:has-text("origin/main")', { timeout: 30000 })
+    await s.win.waitForSelector('.sidebar .name[data-full="origin/main"]', { timeout: 30000 })
   } finally {
     await s.close()
     server.close()

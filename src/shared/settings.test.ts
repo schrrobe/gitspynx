@@ -24,6 +24,11 @@ describe('parseSettings', () => {
     expect(parseSettings({ theme: 'light' })).toMatchObject({ version: DEFAULT_SETTINGS.version, theme: 'light' })
   })
 
+  it('reads the optional commit list columns, dropping unknown ones', () => {
+    expect(parseSettings({}).listColumns).toEqual([])
+    expect(parseSettings({ listColumns: ['date', 'bogus', 'sha', 'date'] }).listColumns).toEqual(['date', 'sha'])
+  })
+
   it('reads the terminal height within sane bounds', () => {
     expect(parseSettings({}).terminalHeight).toBe(260)
     expect(parseSettings({ terminalHeight: 400 }).terminalHeight).toBe(400)

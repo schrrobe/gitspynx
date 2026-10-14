@@ -481,7 +481,9 @@ async function createWindow() {
     minHeight: 600,
     title: 'gitspynx',
     show: false,
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#16181d' : '#ffffff',
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#16191e' : '#ffffff',
+    // macOS: the tab strip is the title bar, traffic lights sit at its left end
+    ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 14, y: 13 } } : {}),
     webPreferences: {
       zoomFactor: s.zoom,
       preload: join(__dirname, '../preload/index.js'),

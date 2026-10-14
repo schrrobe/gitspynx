@@ -16,7 +16,7 @@ module.exports = async () => {
     await s.win.waitForSelector('.sidebar .item:has-text("topic")')
     expect(git(r, 'rev-parse', '--abbrev-ref', 'HEAD'), 'topic', 'created and checked out')
     await s.win.dblclick('.sidebar .item:has-text("main")')
-    await s.win.waitForFunction(() => document.querySelector('.toolbar .dim')?.textContent === 'main')
+    await s.win.waitForFunction(() => document.querySelector('.toolbar .branch-name')?.textContent.trim() === 'main')
     expect(git(r, 'rev-parse', '--abbrev-ref', 'HEAD'), 'main', 'checked out main')
   } finally {
     await s.close()

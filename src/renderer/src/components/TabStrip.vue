@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, watch } from 'vue'
+import { isMac } from '../keymap'
 import { ask } from '../prompt'
+import { settingsOpen } from '../ui'
+import Icon from './Icon.vue'
 import { useRepo } from '../stores/repo'
 import { tabLabels, useTabs } from '../stores/tabs'
 
@@ -39,7 +42,7 @@ async function saveWorkspace() {
 </script>
 
 <template>
-  <div class="strip">
+  <div class="strip" :class="{ mac: isMac }">
     <div class="tabs" role="tablist" aria-label="Offene Repositories">
       <div
         v-for="(path, i) in tabs.tabs"
@@ -59,39 +62,42 @@ async function saveWorkspace() {
           @click="tabs.activate(i)"
           @keydown="onKey($event, i)"
         >
-          <span v-if="repo.backgroundErrors.has(path)" class="failed" aria-label="Fehler" />{{ labels[i] }}
+          <Icon name="branch" :size="14" class="repo-icon" /><span v-if="repo.backgroundErrors.has(path)" class="failed" aria-label="Fehler" />{{ labels[i] }}
         </button>
         <button class="close" tabindex="-1" aria-hidden="true" :aria-label="`${labels[i]} schließen`" @click="tabs.closeTab(i)">×</button>
       </div>
     </div>
-    <button class="add" aria-label="Repository öffnen" title="Repository öffnen" @click="emit('add')">+</button>
+    <button class="add" aria-label="Repository öffnen" title="Repository öffnen" @click="emit('add')"><Icon name="plus" :size="16" /></button>
     <span class="spacer" />
     <button v-if="tabs.tabs.length > 1" class="ws" @click="saveWorkspace">Als Workspace speichern…</button>
+    <button class="gear" aria-label="Einstellungen" title="Einstellungen" @click="settingsOpen = true"><Icon name="settings" :size="17" /></button>
   </div>
 </template>
 
 <style scoped>
-.strip { grid-area: tabs; display: flex; align-items: flex-end; gap: 2px; padding: 4px 8px 0; background: var(--bg); border-bottom: 1px solid var(--border); min-width: 0; }
-/* scrolls on its own so + stays reachable; 1px overlap lets the active tab cover the border */
-.tabs { display: flex; align-items: flex-end; gap: 2px; min-width: 0; overflow-x: auto; overflow-y: hidden; margin-bottom: -1px; scrollbar-width: none; }
+/* the darkest bar; on macOS it is the window's title bar (draggable, room for the traffic lights) */
+.strip { grid-area: tabs; display: flex; align-items: stretch; height: 38px; background: var(--bg-titlebar); border-bottom: 1px solid var(--border); min-width: 0; padding-right: 6px; }
+.strip.mac { padding-left: 78px; -webkit-app-region: drag; }
+.strip button, .tab { -webkit-app-region: no-drag; }
+.tabs { display: flex; align-items: stretch; min-width: 0; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
 .tab {
   display: flex;
   align-items: center;
   flex-shrink: 0;
-  max-width: 220px;
-  border: 1px solid transparent;
-  border-bottom: 0;
-  border-radius: 6px 6px 0 0;
+  max-width: 190px;
+  border-right: 1px solid var(--border);
   color: var(--text-dim);
 }
-.tab:hover { background: var(--bg-hover); }
-.tab.active { background: var(--bg-panel); border-color: var(--border); color: var(--text); padding-bottom: 1px; }
-.label { border: 0; background: none; color: inherit; padding: 4px 4px 4px 12px; cursor: default; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.failed { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--danger); margin-right: 6px; vertical-align: 1px; }
-.close { border: 0; background: none; padding: 0 6px 0 4px; line-height: 1; color: inherit; visibility: hidden; }
+.tab:hover { background: var(--bg-hover); color: var(--text); }
+.tab.active { background: var(--bg-toolbar); color: var(--text); box-shadow: inset 0 2px 0 var(--accent); }
+.label { display: flex; align-items: center; gap: 7px; border: 0; background: none; color: inherit; padding: 0 6px 0 14px; height: 100%; cursor: default; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.repo-icon { flex: none; opacity: 0.7; }
+.close { border: 0; background: none; padding: 0 10px 0 4px; line-height: 1; color: inherit; visibility: hidden; font-size: 15px; }
 .tab:hover .close, .tab.active .close { visibility: visible; }
 .close:hover { color: var(--danger); }
-.add { flex-shrink: 0; border: 0; background: none; padding: 2px 8px; font-size: 16px; line-height: 1; margin-bottom: 3px; }
+.failed { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--danger); flex: none; }
+.add, .gear { flex-shrink: 0; display: flex; align-items: center; border: 0; background: none; padding: 0 10px; color: var(--text-dim); }
+.add:hover, .gear:hover { color: var(--text); }
 .spacer { flex: 1; }
-.ws { flex-shrink: 0; padding: 1px 8px; font-size: 12px; margin-bottom: 4px; }
+.ws { flex-shrink: 0; align-self: center; padding: 2px 8px; font-size: 12px; }
 </style>

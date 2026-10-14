@@ -6,6 +6,9 @@ import { ask } from '../prompt'
 import { useRepo, WIP } from '../stores/repo'
 import { useTabs } from '../stores/tabs'
 import { graphColumnPx, LANE_PX } from '../graph/column'
+import { initials, refPills, relativeTime } from '../graphLabels'
+import type { ListColumn } from '../../../shared/settings'
+import Icon from './Icon.vue'
 import { useSettings } from '../stores/settings'
 import GraphCell from './GraphCell.vue'
 
@@ -44,12 +47,33 @@ function resizeKey(e: KeyboardEvent) {
   void settings.save({ graphWidth: clampPx(columnPx.value + step) })
 }
 
+const REFS_W = 190 // BRANCH / TAG column
 const visible = computed(() => {
   const start = Math.max(0, Math.floor(scrollTop.value / ROW) - OVERSCAN)
   const end = Math.min(repo.commits.length, Math.ceil((scrollTop.value + height.value) / ROW) + OVERSCAN)
   const rows = repo.graph.rows
-  return repo.commits.slice(start, end).map((c, i) => ({ c, index: start + i, row: rows[start + i], top: (start + i) * ROW }))
+  const now = Date.now() / 1000
+  const head = repo.info?.head.branch ?? null
+  return repo.commits.slice(start, end).map((c, i) => {
+    const index = start + i
+    const when = relativeTime(c.date, now)
+    const prev = repo.commits[index - 1]
+    // like GitKraken: the relative time where it changes from the row above
+    const showWhen = !prev || relativeTime(prev.date, now) !== when
+    const pills = refPills(repo.refsBySha.get(c.sha) ?? [], head)
+    return { c, index, row: rows[index], top: index * ROW, pills, when: showWhen ? when : '', initials: initials(c.author), merge: c.parents.length > 1 }
+  })
 })
+const columns = computed(() => new Set<ListColumn>(settings.settings.listColumns))
+const graphPx = computed(() => Math.max(columnPx.value + 8, 64)) // room for the GRAPH heading
+async function columnsMenu() {
+  const labels: Record<ListColumn, string> = { author: 'Autor', date: 'Datum', sha: 'SHA' }
+  const id = await window.gitspynx.showContextMenu((Object.keys(labels) as ListColumn[]).map((c) => ({ id: c, label: `${columns.value.has(c) ? '✓ ' : ''}${labels[c]}` })))
+  if (!id) return
+  const next = new Set(columns.value)
+  if (!next.delete(id as ListColumn)) next.add(id as ListColumn)
+  void settings.save({ listColumns: [...next] })
+}
 
 // Each repository keeps its scroll position across tab switches.
 onMounted(() => {
@@ -158,7 +182,17 @@ function nextHit(delta: 1 | -1) {
 }
 
 // The "Commits suchen" command (Mod+F by default) asks for focus.
+// Hidden until asked for (Search button, Mod+F), as in GitKraken; Esc clears, then closes.
+const searchOpen = ref(false)
+function searchEsc() {
+  if (query.value) query.value = ''
+  else {
+    searchOpen.value = false
+    scroller.value?.focus()
+  }
+}
 watch(focusSearchRequest, async () => {
+  searchOpen.value = true
   await nextTick() // the list may just have been shown again (diff/conflict view closed)
   searchInput.value?.focus()
   searchInput.value?.select()
@@ -167,7 +201,7 @@ watch(focusSearchRequest, async () => {
 
 <template>
   <div class="wrap">
-  <div class="search">
+  <div v-if="searchOpen || query" class="search">
     <select v-model="mode" aria-label="Suchen in" title="Suchen in">
       <option value="meta">Nachricht/Autor/SHA</option>
       <option value="code">Code (Änderungen)</option>
@@ -180,7 +214,7 @@ watch(focusSearchRequest, async () => {
       aria-label="Commits suchen"
       @keydown.enter.exact.prevent="nextHit(1)"
       @keydown.shift.enter.prevent="nextHit(-1)"
-      @keydown.esc="query = ''"
+      @keydown.esc="searchEsc"
     />
     <template v-if="query.trim()">
       <span class="dim count">{{ searching ? 'sucht…' : hits.length ? `${position + 1 || '–'}/${hits.length}` : 'keine Treffer' }}</span>
@@ -191,13 +225,24 @@ watch(focusSearchRequest, async () => {
         Alle laden
       </button>
     </template>
+    <button class="close-search" aria-label="Suche schließen" title="Suche schließen (Esc)" @click="query = ''; searchOpen = false">×</button>
   </div>
-  <button v-if="repo.status.length" class="wip" :class="{ selected: repo.selected === WIP }" @click="repo.select(WIP)">
-    <span class="wip-dot" aria-hidden="true" />
-    <span>Arbeitsverzeichnis</span>
-    <span class="dim">{{ repo.status.length }} {{ repo.status.length === 1 ? 'Datei' : 'Dateien' }} geändert</span>
-  </button>
   <div class="list">
+  <div class="colhead" :style="{ '--refs-w': `${REFS_W}px`, '--graph-w': `${graphPx}px` }">
+    <span class="refs">Branch / Tag</span>
+    <span class="graph">Graph</span>
+    <span class="subject">Commit Message</span>
+    <span v-if="columns.has('author')" class="author">Autor</span>
+    <span v-if="columns.has('date')" class="date">Datum</span>
+    <span v-if="columns.has('sha')" class="sha">SHA</span>
+    <button class="cols" aria-label="Spalten" title="Spalten ein-/ausblenden" @click="columnsMenu"><Icon name="settings" :size="14" /></button>
+  </div>
+  <!-- uncommitted changes as the first graph row ("// WIP"), as in GitKraken -->
+  <button v-if="repo.status.length" class="wip" :class="{ selected: repo.selected === WIP }" :style="{ '--refs-w': `${REFS_W}px`, '--graph-w': `${graphPx}px` }" @click="repo.select(WIP)">
+    <span class="refs" />
+    <span class="graph"><span class="wip-dot" aria-hidden="true"><Icon name="pencil" :size="11" /></span></span>
+    <span class="subject"><span class="wip-label">// WIP</span><span class="dim">{{ repo.status.length }} {{ repo.status.length === 1 ? 'Datei' : 'Dateien' }} geändert</span></span>
+  </button>
   <div
     v-if="repo.commits.length && naturalPx > 2 * LANE_PX"
     class="graph-handle"
@@ -209,7 +254,7 @@ watch(focusSearchRequest, async () => {
     :aria-valuemax="naturalPx"
     tabindex="0"
     title="Ziehen: Graph-Spalte breiter/schmaler · Doppelklick: automatisch"
-    :style="{ left: `${columnPx + 4}px` }"
+    :style="{ left: `${REFS_W + graphPx}px` }"
     @pointerdown.prevent="startResize"
     @dblclick="settings.save({ graphWidth: null })"
     @keydown="resizeKey"
@@ -220,6 +265,7 @@ watch(focusSearchRequest, async () => {
     tabindex="0"
     role="listbox"
     aria-label="Commits"
+    :style="{ '--refs-w': `${REFS_W}px`, '--graph-w': `${graphPx}px` }"
     @scroll.passive="onScroll"
     @keydown.down.prevent="move(1)"
     @keydown.up.prevent="move(-1)"
@@ -231,24 +277,35 @@ watch(focusSearchRequest, async () => {
         class="row"
         role="option"
         :aria-selected="v.c.sha === repo.selected"
-        :class="{ selected: v.c.sha === repo.selected, hit: hitSet.has(v.index), dimmed: query.trim() && !hitSet.has(v.index) }"
-        :style="{ transform: `translateY(${v.top}px)` }"
+        :class="{ selected: v.c.sha === repo.selected, hit: hitSet.has(v.index), dimmed: query.trim() && !hitSet.has(v.index), labelled: v.pills.length }"
+        :style="{ transform: `translateY(${v.top}px)`, '--lane': `var(--lane-${v.row.color})` }"
         @click="repo.select(v.c.sha)"
         @contextmenu.prevent="menu(v.c.sha)"
       >
-        <GraphCell :row="v.row" :column-px="columnPx" />
-        <span class="subject">
+        <span class="refs">
           <span
-            v-for="r in repo.refsBySha.get(v.c.sha) ?? []"
-            :key="r.fullName"
+            v-for="p in v.pills.slice(0, 1)"
+            :key="p.label"
             class="ref"
-            :class="[r.kind, { head: r.kind === 'local' && r.name === repo.info?.head.branch }]"
-          >{{ r.name }}</span>
-          {{ v.c.subject }}
+            :class="{ head: p.head, tag: p.tag }"
+            :title="p.refs.map((r) => r.fullName).join('\n')"
+          >
+            <Icon v-if="p.head" name="check" :size="12" />
+            <span class="ref-name">{{ p.label }}</span>
+            <Icon v-if="p.local && !p.head" name="laptop" :size="12" />
+            <Icon v-if="p.remote" name="cloud" :size="12" />
+            <Icon v-if="p.tag" name="tag" :size="12" />
+          </span>
+          <span v-if="v.pills.length > 1" class="more" :title="v.pills.slice(1).map((p) => p.label).join('\n')">+{{ v.pills.length - 1 }}</span>
         </span>
-        <span class="author dim">{{ v.c.author }}</span>
-        <span class="date dim">{{ dateFmt.format(v.c.date * 1000) }}</span>
-        <span class="sha dim mono">{{ v.c.sha.slice(0, 7) }}</span>
+        <GraphCell :row="v.row" :column-px="columnPx" :initials="v.initials" :merge="v.merge" />
+        <span class="subject">
+          <span class="text">{{ v.c.subject }}</span>
+          <span v-if="v.when" class="when">{{ v.when }}</span>
+        </span>
+        <span v-if="columns.has('author')" class="author dim">{{ v.c.author }}</span>
+        <span v-if="columns.has('date')" class="date dim">{{ dateFmt.format(v.c.date * 1000) }}</span>
+        <span v-if="columns.has('sha')" class="sha dim mono">{{ v.c.sha.slice(0, 7) }}</span>
       </div>
     </div>
     <p v-if="!repo.commits.length && !repo.loading" class="empty dim">Noch keine Commits.</p>
@@ -264,7 +321,7 @@ watch(focusSearchRequest, async () => {
   flex: 1;
   font: inherit;
   color: var(--text);
-  background: var(--bg-panel);
+  background: var(--bg-input);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 3px 8px;
@@ -280,23 +337,24 @@ watch(focusSearchRequest, async () => {
 .scroller { flex: 1; overflow: auto; position: relative; outline: none; }
 .graph-handle { position: absolute; top: 0; bottom: 0; width: 7px; margin-left: -3px; z-index: 2; cursor: col-resize; }
 .graph-handle:hover, .graph-handle:focus-visible { background: color-mix(in srgb, var(--accent) 35%, transparent); outline: none; }
-.wip {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  height: 28px;
-  flex: none;
-  border: 0;
-  border-bottom: 1px dashed var(--border);
-  border-radius: 0;
-  background: none;
-  padding: 0 12px 0 8px;
-  text-align: left;
-}
+.wip { display: flex; align-items: center; height: 28px; flex: none; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: var(--bg-graph); padding: 0 12px 0 0; text-align: left; }
 .wip:hover { background: var(--bg-hover); }
 .wip.selected { background: var(--bg-selected); }
-.wip-dot { width: 10px; height: 10px; border-radius: 50%; border: 2px dashed var(--text-dim); }
+.wip .refs { width: var(--refs-w); flex: none; }
+.wip .graph { width: var(--graph-w); flex: none; display: flex; padding-left: 4px; }
+.wip-dot { width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; border-radius: 50%; border: 2px dashed var(--text-dim); color: var(--text-dim); }
+.wip .subject { flex: 1; display: flex; gap: 10px; align-items: center; padding-left: 10px; border-left: 3px solid var(--text-dim); height: 100%; }
+.wip-label { color: var(--text-dim); font-style: italic; }
+.close-search { border: 0; background: none; padding: 0 6px; font-size: 15px; color: var(--text-dim); }
 .spacer { position: relative; }
+/* column header, as in GitKraken: BRANCH / TAG · GRAPH · COMMIT MESSAGE (+ optional columns) */
+.colhead { display: flex; align-items: center; height: 26px; flex: none; padding-right: 12px; border-bottom: 1px solid var(--border); background: var(--bg-panel); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); font-family: ui-monospace, Menlo, monospace; }
+.colhead .refs { width: var(--refs-w); flex: none; padding-left: 10px; }
+.colhead .graph { width: var(--graph-w); flex: none; padding-left: 6px; border-left: 1px solid var(--border); }
+.colhead .subject { flex: 1; padding-left: 10px; border-left: 1px solid var(--border); }
+.cols { border: 0; background: none; padding: 2px 4px; color: var(--text-dim); display: flex; }
+.cols:hover { color: var(--text); }
+.scroller { background: var(--bg-graph); }
 .row {
   position: absolute;
   left: 0;
@@ -304,17 +362,42 @@ watch(focusSearchRequest, async () => {
   height: 28px;
   display: flex;
   align-items: center;
-  gap: 12px;
   padding-right: 12px;
   white-space: nowrap;
   cursor: default;
+  /* tinted in the commit's lane color across branch/tag and graph, like GitKraken */
+  background: linear-gradient(90deg, color-mix(in srgb, var(--lane) 8%, transparent) 0 calc(var(--refs-w) + var(--graph-w)), transparent 0);
 }
-.row:hover { background: var(--bg-hover); }
-.row.selected { background: var(--bg-selected); }
-.row svg { flex: none; margin-left: 4px; }
-.subject { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.author { width: 140px; overflow: hidden; text-overflow: ellipsis; }
-.date { width: 150px; }
-.sha { width: 60px; }
+.row.labelled { background: linear-gradient(90deg, color-mix(in srgb, var(--lane) 16%, transparent) 0 calc(var(--refs-w) + var(--graph-w)), transparent 0); }
+.row:hover { background-color: var(--bg-hover); }
+.row.selected { background: color-mix(in srgb, var(--lane) 28%, var(--bg-selected)); }
+.row svg { flex: none; margin: 0 4px; }
+.row .refs { width: var(--refs-w); flex: none; display: flex; align-items: center; gap: 4px; padding: 0 6px 0 8px; overflow: hidden; }
+.row .ref {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: calc(var(--refs-w) - 44px);
+  height: 21px;
+  padding: 0 6px;
+  margin: 0;
+  border: 0;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--lane) 38%, var(--bg-graph));
+  color: var(--text);
+  font-size: 12px;
+  font-style: normal;
+}
+.row .ref.head { background: color-mix(in srgb, var(--lane) 58%, var(--bg-graph)); font-weight: 600; }
+.row .ref.tag { background: color-mix(in srgb, var(--lane) 22%, var(--bg-graph)); }
+.row .ref svg { margin: 0; }
+.ref-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.more { font-size: 11px; color: var(--text-dim); }
+.row .subject { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; height: 100%; padding-left: 10px; border-left: 3px solid color-mix(in srgb, var(--lane) 75%, transparent); }
+.subject .text { overflow: hidden; text-overflow: ellipsis; }
+.when { margin-left: auto; flex: none; font-size: 11px; color: var(--text-dim); background: var(--bg-panel); border-radius: 3px; padding: 0 5px; line-height: 16px; }
+.author { width: 140px; flex: none; overflow: hidden; text-overflow: ellipsis; padding-left: 10px; }
+.date { width: 150px; flex: none; padding-left: 10px; }
+.sha { width: 70px; flex: none; padding-left: 10px; }
 .empty { padding: 24px; }
 </style>

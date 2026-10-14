@@ -9,9 +9,13 @@ export interface Settings {
   keymap: Record<string, string> // command id -> combo, overrides the defaults
   graphWidth: number | null // graph column in px; null = automatic
   terminalHeight: number // px
+  listColumns: ListColumn[] // optional columns of the commit list, besides branch/tag, graph, message
 }
 
-export const DEFAULT_SETTINGS: Settings = { version: 1, theme: 'system', zoom: 1, pullMode: 'ff-only', keymap: {}, graphWidth: null, terminalHeight: 260 }
+export const LIST_COLUMNS = ['author', 'date', 'sha'] as const
+export type ListColumn = (typeof LIST_COLUMNS)[number]
+
+export const DEFAULT_SETTINGS: Settings = { version: 1, theme: 'dark', zoom: 1, pullMode: 'ff-only', keymap: {}, graphWidth: null, terminalHeight: 260, listColumns: [] }
 
 const oneOf = <T extends string>(v: unknown, options: readonly T[], fallback: T): T =>
   options.includes(v as T) ? (v as T) : fallback
@@ -31,6 +35,7 @@ export function parseSettings(raw: unknown): Settings {
     pullMode: oneOf(r.pullMode, ['ff-only', 'rebase', 'merge'] as const, DEFAULT_SETTINGS.pullMode),
     keymap,
     graphWidth: typeof r.graphWidth === 'number' && Number.isFinite(r.graphWidth) ? Math.min(4000, Math.max(28, Math.round(r.graphWidth))) : null,
-    terminalHeight: typeof r.terminalHeight === 'number' && Number.isFinite(r.terminalHeight) ? Math.min(2000, Math.max(120, Math.round(r.terminalHeight))) : 260
+    terminalHeight: typeof r.terminalHeight === 'number' && Number.isFinite(r.terminalHeight) ? Math.min(2000, Math.max(120, Math.round(r.terminalHeight))) : 260,
+    listColumns: LIST_COLUMNS.filter((c) => Array.isArray(r.listColumns) && r.listColumns.includes(c))
   }
 }

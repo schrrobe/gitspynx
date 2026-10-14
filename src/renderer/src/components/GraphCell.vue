@@ -3,8 +3,9 @@ import { computed } from 'vue'
 import { LANE_PX as LANE, nodeLane } from '../graph/column'
 import type { GraphRow } from '../graph/layout'
 
-// columnPx: visible width; lanes beyond it are cut off, a node there is drawn at the edge
-const props = defineProps<{ row: GraphRow; columnPx: number }>()
+// columnPx: visible width; lanes beyond it are cut off, a node there is drawn at the edge.
+// Commits are drawn as avatar circles (author initials), merges as small dots.
+const props = defineProps<{ row: GraphRow; columnPx: number; initials: string; merge: boolean }>()
 const H = 28
 const MID = H / 2
 const x = (lane: number) => lane * LANE + LANE / 2
@@ -38,7 +39,17 @@ const node = computed(() => nodeLane(props.row.col, props.columnPx))
       stroke-width="2"
       fill="none"
     />
-    <circle v-if="!node.clipped" :cx="x(node.lane)" :cy="MID" r="4.5" :fill="`var(--lane-${props.row.color})`" stroke="var(--bg)" stroke-width="1.5" />
+    <template v-if="!node.clipped">
+      <circle v-if="props.merge" :cx="x(node.lane)" :cy="MID" r="5" :fill="`var(--lane-${props.row.color})`" stroke="var(--bg-graph)" stroke-width="2" />
+      <template v-else>
+        <circle :cx="x(node.lane)" :cy="MID" r="10.5" :fill="`var(--lane-${props.row.color})`" stroke="var(--bg-graph)" stroke-width="1.5" />
+        <text :x="x(node.lane)" :y="MID" text-anchor="middle" dominant-baseline="central" class="initials">{{ props.initials }}</text>
+      </template>
+    </template>
     <circle v-else :cx="x(node.lane)" :cy="MID" r="4" fill="var(--bg)" :stroke="`var(--lane-${props.row.color})`" stroke-width="2.5"><title>Commit in einer ausgeblendeten Spur – Graph-Spalte breiter ziehen</title></circle>
   </svg>
 </template>
+
+<style scoped>
+.initials { font: 600 9px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; fill: #0d1015; pointer-events: none; }
+</style>

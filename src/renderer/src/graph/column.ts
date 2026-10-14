@@ -1,7 +1,7 @@
 // Width of the graph column. Very wide graphs (git/git: 158 lanes, ~2200 px) would push subject,
 // author and date out of view, so the automatic width is capped; the user can drag it wider.
-export const LANE_PX = 14
-export const AUTO_GRAPH_PX = 240
+export const LANE_PX = 22 // room for an avatar node
+export const AUTO_GRAPH_PX = 330
 
 export const graphColumnPx = (lanes: number, setting: number | null) => Math.min(lanes * LANE_PX, setting ?? AUTO_GRAPH_PX)
 

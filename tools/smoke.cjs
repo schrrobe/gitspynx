@@ -77,14 +77,20 @@ const server = http.createServer((req, res) => {
     await win.waitForFunction((src) => new RegExp(src, 'm').test(document.querySelector('.xterm-rows')?.innerText ?? ''), marker.source, { timeout: 20000 })
     await win.keyboard.press('Control+`') // terminal away
     // fetch from the protected remote: the app asks for user name, then (masked) password
-    await win.click('.toolbar button:has-text("Fetch")')
+    // Fetch sits in Pull's ▾ menu (a native menu Playwright cannot click): pick it for the test
+    await app.evaluate(({ Menu }) => {
+      Menu.prototype.popup = function () {
+        this.items.find((i) => i.label.startsWith('Fetch')).click()
+      }
+    })
+    await win.click('.toolbar .caret')
     await win.waitForSelector('dialog[open] #prompt-input', { timeout: 20000 })
     await win.fill('#prompt-input', 'ada')
     await win.keyboard.press('Enter')
     await win.waitForSelector('dialog[open] #prompt-input[type=password]', { timeout: 20000 })
     await win.fill('#prompt-input', 's3cret')
     await win.keyboard.press('Enter')
-    await win.waitForSelector('.sidebar .item:has-text("origin/main")', { timeout: 30000 })
+    await win.waitForSelector('.sidebar .name[data-full="origin/main"]', { timeout: 30000 })
     console.log('smoke ok')
   } catch (e) {
     await win.screenshot({ path: path.join(process.cwd(), 'smoke-failure.png') }).catch(() => {})

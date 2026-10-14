@@ -100,6 +100,12 @@ Kurzfassung; jede Entscheidung mit Begründung und Kosten im Ledger (`.superpowe
 - Interaktiver Rebase: Plan im Main-Prozess validiert, Todo-Datei von main geschrieben
 - Force-Push nur mit `--force-with-lease --force-if-includes`
 
+**Oberfläche (an GitKraken angelehnt)**
+- Dunkles Blau-Grau als Standard (hell weiterhin wählbar), kräftige Spurfarben; keine Logos oder Markenelemente von GitKraken
+- Tabs in der Titelleiste (macOS: neben den Ampel-Knöpfen), Toolbar mit Repo-/Branch-Auswahl, beschrifteten Icons (Undo, Redo, Pull ▾, Push, Branch, Stash, Pop, Terminal), Actions und Search; Fetch liegt wie bei GitKraken im ▾-Menü von Pull
+- Linke Leiste mit Filter, einklappbaren Abschnitten und Branch-Bäumen nach Ordnern; Graph mit Spalten BRANCH/TAG · GRAPH · COMMIT MESSAGE (Autor, Datum, SHA zuschaltbar), eingefärbten Zeilen und relativen Zeiten; Suchleiste nur bei Bedarf
+- Avatare als Initialen in Farbkreisen statt Gravatar-Bildern: Gravatar würde den Hash jeder Autoren-E-Mail an einen externen Dienst schicken
+
 **Verhalten**
 - Credentials zuerst über Credential-Helper und SSH-Agent; fehlt dort etwas, fragt die App selbst (askpass). Gespeichert wird nichts, Speichern bleibt Sache des Credential-Helpers
 - Netzwerkoperationen ohne Fortschrittsanzeige, nur Busy-Zustand; Timeouts mit SIGTERM → SIGKILL
