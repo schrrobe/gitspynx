@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -42,6 +42,25 @@ describe('askpass bridge', () => {
       expect(prompts[1]).toMatch(/^Password for 'https:\/\/ada@example\.com'/)
     } finally {
       askpass.close()
+    }
+  })
+
+  it.skipIf(process.platform === 'win32')('answers an ssh passphrase prompt (same SSH_ASKPASS path as git over ssh)', async () => {
+    const dir = tempDir()
+    execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', 's3cret', '-C', 'test', '-f', join(dir, 'key')])
+    const agent = execFileSync('ssh-agent', ['-s', '-a', join(dir, 'agent.sock')]).toString()
+    const pid = /SSH_AGENT_PID=(\d+)/.exec(agent)![1]
+    const prompts: string[] = []
+    const askpass = await startAskpass(tempDir(), process.execPath, async (p) => (prompts.push(p), 's3cret'))
+    try {
+      const add = spawn('ssh-add', [join(dir, 'key')], { env: { ...process.env, SSH_AUTH_SOCK: join(dir, 'agent.sock'), ...askpass.env }, stdio: ['ignore', 'pipe', 'pipe'] })
+      const status = await new Promise((resolve) => add.on('close', resolve))
+      expect(status).toBe(0)
+      expect(prompts[0]).toMatch(/passphrase/i)
+      expect(execFileSync('ssh-add', ['-l'], { env: { ...process.env, SSH_AUTH_SOCK: join(dir, 'agent.sock') } }).toString()).toMatch(/test/)
+    } finally {
+      askpass.close()
+      process.kill(Number(pid))
     }
   })
 
