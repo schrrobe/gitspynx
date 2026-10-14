@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- gitspynx app icon: a small commit graph (main line + merged branch) in the app's lane colors -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#232733"/>
+      <stop offset="1" stop-color="#16181d"/>
+    </linearGradient>
+  </defs>
+  <rect x="80" y="80" width="864" height="864" rx="196" fill="url(#bg)"/>
+  <rect x="80.5" y="80.5" width="863" height="863" rx="195.5" fill="none" stroke="#3a4050" stroke-width="3"/>
+  <g fill="none" stroke-linecap="round" stroke-width="44">
+    <path d="M392 236 V788" stroke="#5b9cf5"/>
+    <path d="M392 788 C392 690 632 700 632 600 V430 C632 330 392 340 392 236" stroke="#e8a33d"/>
+  </g>
+  <g stroke="#16181d" stroke-width="18">
+    <circle cx="392" cy="236" r="62" fill="#5b9cf5"/>
+    <circle cx="392" cy="788" r="62" fill="#5b9cf5"/>
+    <circle cx="632" cy="512" r="62" fill="#e8a33d"/>
+  </g>
+</svg>

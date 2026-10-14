@@ -1,0 +1,1030 @@
+import { createPinia, setActivePinia } from 'pinia'
+import { beforeEach, describe, expect, it } from 'vitest'
+import type { Commit, RepoInfo } from '../../../shared/types'
+import { MAX_LOG_PAGE } from '../../../shared/types'
+import { useRepo, WIP } from './repo'
+
+const info: RepoInfo = { path: '/r', head: { branch: 'main', sha: 'a0' }, refs: [], tips: ['a0'], operation: null, stashes: [], worktrees: [], submodules: [], lfs: null, lfsAvailable: false }
+const page = (prefix: string, n = 2000): Commit[] =>
+  Array.from({ length: n }, (_, i) => ({
+    sha: `${prefix}${i}`,
+    parents: i < n - 1 ? [`${prefix}${i + 1}`] : [],
+    author: 'a',
+    email: 'a@x',
+    date: 0,
+    subject: `${prefix}${i}`
+  }))
+
+function deferred<T>() {
+  let resolve!: (v: T) => void
+  const promise = new Promise<T>((r) => (resolve = r))
+  return { promise, resolve }
+}
+
+let logCalls: { skip: number; d: ReturnType<typeof deferred<Commit[]>> }[]
+
+beforeEach(() => {
+  setActivePinia(createPinia())
+  logCalls = []
+  ;(globalThis as unknown as { window: unknown }).window = {
+    gitspynx: {
+      openRepo: async () => info,
+      closeRepo: async () => {},
+      readHead: async () => ({ sha: 'a0', branch: 'main' }),
+      readStatus: async () => [],
+      readFileDiff: async () => ({ binary: false, hunks: [] }),
+      readLog: (_repo: string, skip: number) => {
+        const d = deferred<Commit[]>()
+        logCalls.push({ skip, d })
+        return d.promise
+      }
+    }
+  }
+})
+
+const flush = () => new Promise((r) => setTimeout(r, 0))
+
+describe('repo store', () => {
+  it('drops a page that was still loading when the repo was reopened', async () => {
+    const repo = useRepo()
+    const first = repo.open('/r')
+    await flush()
+    logCalls[0].d.resolve(page('old'))
+    await first
+
+    const more = repo.loadMore()
+    await flush()
+    const reopen = repo.open('/r')
+    await flush()
+    logCalls[2].d.resolve(page('new'))
+    await reopen
+    logCalls[1].d.resolve(page('stale'))
+    await more
+
+    expect(repo.commits.map((c) => c.sha)).toEqual(page('new').map((c) => c.sha))
+    expect(repo.loading).toBe(false)
+  })
+
+  it('stays loading while a reopen is in flight even if an older page finishes', async () => {
+    const repo = useRepo()
+    const first = repo.open('/r')
+    await flush()
+    logCalls[0].d.resolve(page('old'))
+    await first
+
+    const more = repo.loadMore()
+    await flush()
+    const reopen = repo.open('/r')
+    await flush()
+    logCalls[1].d.resolve(page('stale'))
+    await more
+    expect(repo.loading).toBe(true)
+
+    logCalls[2].d.resolve(page('new'))
+    await reopen
+    expect(repo.loading).toBe(false)
+  })
+
+  it('shows the diff for the file that was opened', async () => {
+    const repo = useRepo()
+    const first = repo.open('/r')
+    await flush()
+    logCalls[0].d.resolve(page('c', 3))
+    await first
+    await repo.openDiff({ path: 'f1', staged: false })
+    expect(repo.diff).toEqual({ binary: false, hunks: [] })
+  })
+
+  it('re-reads an open diff after a history reload (external commit, reset, checkout)', async () => {
+    const repo = useRepo()
+    const first = repo.open('/r')
+    await flush()
+    logCalls[0].d.resolve(page('c', 3))
+    await first
+    const w = (globalThis as unknown as { window: { gitspynx: Record<string, unknown> } }).window
+    w.gitspynx.readStatus = async () => [{ path: 'f1', staged: 'M', unstaged: null, conflicted: false }]
+    w.gitspynx.readFileDiff = async () => ({ binary: false, hunks: ['before'] })
+    await repo.openDiff({ path: 'f1', staged: true })
+    w.gitspynx.readLog = async () => page('c', 3)
+    w.gitspynx.readStatus = async () => [{ path: 'f1', staged: null, unstaged: 'M', conflicted: false }] // e.g. git reset
+    w.gitspynx.readFileDiff = async () => ({ binary: false, hunks: ['after'] })
+    await repo.refresh(true)
+    expect(repo.diffTarget).toEqual({ path: 'f1', staged: false })
+    expect(repo.diff).toEqual({ binary: false, hunks: ['after'] })
+  })
+
+  it('shows the newest diff when an older read of the same file finishes last', async () => {
+    const repo = useRepo()
+    const first = repo.open('/r')
+    await flush()
+    logCalls[0].d.resolve(page('c', 3))
+    await first
+    const reads: ReturnType<typeof deferred<unknown>>[] = []
+    const w = (globalThis as unknown as { window: { gitspynx: Record<string, unknown> } }).window
+    w.gitspynx.readFileDiff = () => {
+      const d = deferred<unknown>()
+      reads.push(d)
+      return d.promise
+    }
+    const target = { path: 'f1', staged: false }
+    const older = repo.openDiff(target)
+    const newer = repo.openDiff(target) // e.g. a watcher refresh after an external git reset
+    reads[1].resolve({ binary: false, hunks: ['new'] })
+    await newer
+    reads[0].resolve({ binary: false, hunks: ['old'] })
+    await older
+    expect(repo.diff).toEqual({ binary: false, hunks: ['new'] })
+  })
+
+  it('follows an open diff to the staged side when the file gets staged', async () => {
+    const repo = useRepo()
+    const first = repo.open('/r')
+    await flush()
+    logCalls[0].d.resolve(page('c', 3))
+    await first
+    await repo.openDiff({ path: 'f1', staged: false })
+    const w = (globalThis as unknown as { window: { gitspynx: Record<string, unknown> } }).window
+    w.gitspynx.stage = async () => {}
+    w.gitspynx.readStatus = async () => [{ path: 'f1', staged: 'M', unstaged: null, conflicted: false }]
+    await repo.stage(['f1'])
+    expect(repo.diffTarget).toEqual({ path: 'f1', staged: true })
+  })
+
+  describe('deleteBranch', () => {
+    async function openedRepo() {
+      const repo = useRepo()
+      const first = repo.open('/r')
+      await flush()
+      logCalls[0].d.resolve(page('c', 3))
+      await first
+      return repo
+    }
+    function mockApi(confirms: boolean[], unmerged: boolean) {
+      const calls: [string, boolean][] = []
+      const w = (globalThis as unknown as { window: { gitspynx: Record<string, unknown> } }).window
+      w.gitspynx.confirm = async () => confirms.shift() ?? false
+      w.gitspynx.deleteBranch = async (_r: string, name: string, force: boolean) => {
+        calls.push([name, force])
+        if (unmerged && !force) throw new Error("error: the branch 'x' is not fully merged")
+      }
+      w.gitspynx.readLog = async () => page('c', 3)
+      return calls
+    }
+
+    it('does nothing when the first confirmation is cancelled', async () => {
+      const repo = await openedRepo()
+      const calls = mockApi([false], false)
+      await repo.deleteBranch('x')
+      expect(calls).toEqual([])
+    })
+
+    it('asks again and forces when the branch is not fully merged', async () => {
+      const repo = await openedRepo()
+      const calls = mockApi([true, true], true)
+      await repo.deleteBranch('x')
+      expect(calls).toEqual([['x', false], ['x', true]])
+      expect(repo.error).toBeNull()
+    })
+
+    it('remembers the upstream so undo restores tracking', async () => {
+      const repo = await openedRepo()
+      repo.info = { ...repo.info!, refs: [{ name: 'x', fullName: 'refs/heads/x', kind: 'local', target: 'c9', upstream: 'origin/x', upstreamRemote: 'origin', upstreamMerge: 'refs/heads/x' }] }
+      mockApi([true], false)
+      let undone: unknown[] = []
+      const w = (globalThis as unknown as { window: { gitspynx: Record<string, unknown> } }).window
+      w.gitspynx.applyUndo = async (_r: string, steps: unknown[]) => void (undone = steps)
+      await repo.deleteBranch('x')
+      await repo.undo()
+      expect(undone).toEqual([{ type: 'createBranch', name: 'x', sha: 'c9', upstream: { remote: 'origin', merge: 'refs/heads/x' } }])
+    })
+
+    it('keeps the branch when forcing is declined', async () => {
+      const repo = await openedRepo()
+      const calls = mockApi([true, false], true)
+      await repo.deleteBranch('x')
+      expect(calls).toEqual([['x', false]])
+    })
+  })
+
+  describe('pushBranch', () => {
+    async function setup(results: ('ok' | 'rejected')[], confirms: boolean[]) {
+      const repo = useRepo()
+      const first = repo.open('/r')
+      await flush()
+      logCalls[0].d.resolve(page('c', 3))
+      await first
+      const calls: boolean[] = []
+      const w = (globalThis as unknown as { window: { gitspynx: Record<string, unknown> } }).window
+      w.gitspynx.push = async (_r: string, force: boolean) => (calls.push(force), results.shift())
+      w.gitspynx.confirm = async () => confirms.shift() ?? false
+      w.gitspynx.readLog = async () => page('c', 3)
+      return { repo, calls }
+    }
+
+    it('pushes once when the remote accepts', async () => {
+      const { repo, calls } = await setup(['ok'], [])
+      await repo.pushBranch()
+      expect(calls).toEqual([false])
+      expect(repo.busy).toBeNull()
+    })
+
+    it('offers a force-with-lease push after a rejection', async () => {
+      const { repo, calls } = await setup(['rejected', 'ok'], [true])
+      await repo.pushBranch()
+      expect(calls).toEqual([false, true])
+    })
+
+    it('does not force when the user declines', async () => {
+      const { repo, calls } = await setup(['rejected'], [false])
+      await repo.pushBranch()
+      expect(calls).toEqual([false])
+      expect(repo.error).toBeNull()
+    })
+  })
+
+  it('coalesces status refreshes that arrive while one is running', async () => {
+    const repo = useRepo()
+    const first = repo.open('/r')
+    await flush()
+    logCalls[0].d.resolve(page('c', 3))
+    await first
+    const w = (globalThis as unknown as { window: { gitspynx: Record<string, unknown> } }).window
+    const pending: ReturnType<typeof deferred<never[]>>[] = []
+    w.gitspynx.readStatus = () => {
+      const d = deferred<never[]>()
+      pending.push(d)
+      return d.promise
+    }
+    const runs = [repo.refreshStatus(), repo.refreshStatus(), repo.refreshStatus()]
+    await flush()
+    expect(pending).toHaveLength(1)
+    pending[0].resolve([])
+    await flush()
+    expect(pending).toHaveLength(2) // one follow-up for all calls that came in meanwhile
+    pending[1].resolve([])
+    await Promise.all(runs)
+    expect(pending).toHaveLength(2)
+  })
+
+  it('unstages both sides of a staged rename', async () => {
+    const repo = useRepo()
+    const first = repo.open('/r')
+    await flush()
+    logCalls[0].d.resolve(page('c', 3))
+    await first
+    const w = (globalThis as unknown as { window: { gitspynx: Record<string, unknown> } }).window
+    let unstaged: string[] = []
+    w.gitspynx.unstage = async (_r: string, paths: string[]) => void (unstaged = paths)
+    await repo.unstageFiles([{ path: 'new.ts', oldPath: 'old.ts', staged: 'R', unstaged: null, conflicted: false }])
+    expect(unstaged.sort()).toEqual(['new.ts', 'old.ts'])
+  })
+
+  describe('consistency', () => {
+    async function opened() {
+      const repo = useRepo()
+      const first = repo.open('/r')
+      await flush()
+      logCalls[0].d.resolve(page('c', 3))
+      await first
+      return { repo, w: (globalThis as unknown as { window: { gitspynx: Record<string, unknown> } }).window }
+    }
+
+    it('ignores errors from a commit selection that is no longer current', async () => {
+      const { repo, w } = await opened()
+      const slow = deferred<never>()
+      w.gitspynx.readCommit = (_r: string, sha: string) => (sha === 'old' ? slow.promise : Promise.resolve({ sha }))
+      const a = repo.select('old')
+      await repo.select('new')
+      ;(slow as unknown as { resolve: (v: unknown) => void }).resolve(Promise.reject(new Error('boom')))
+      await a
+      expect(repo.error).toBeNull()
+    })
+
+    it('drops a status response that belongs to a repo closed meanwhile', async () => {
+      const { repo, w } = await opened()
+      const late = deferred<unknown[]>()
+      w.gitspynx.readStatus = () => late.promise
+      const run = repo.refreshStatus()
+      repo.close()
+      late.resolve([{ path: 'x', staged: 'M', unstaged: null, conflicted: false }])
+      await run
+      expect(repo.status).toEqual([])
+    })
+
+    it('blocks other repository operations while a network operation runs', async () => {
+      const { repo, w } = await opened()
+      const push = deferred<'ok'>()
+      w.gitspynx.push = () => push.promise
+      let checkedOut = false
+      w.gitspynx.checkout = async () => void (checkedOut = true)
+      w.gitspynx.readLog = async () => page('c', 3)
+      const p = repo.pushBranch()
+      await flush()
+      await repo.checkoutBranch('other')
+      expect(checkedOut).toBe(false)
+      push.resolve('ok')
+      await p
+    })
+  })
+
+  describe('operations', () => {
+    async function opened() {
+      const repo = useRepo()
+      const first = repo.open('/r')
+      await flush()
+      logCalls[0].d.resolve(page('c', 3))
+      await first
+      const w = (globalThis as unknown as { window: { gitspynx: Record<string, unknown> } }).window
+      w.gitspynx.readLog = async () => page('c', 3)
+      return { repo, w }
+    }
+
+    it('shows the working directory when a merge stops on conflicts', async () => {
+      const { repo, w } = await opened()
+      w.gitspynx.merge = async () => 'conflicts'
+      await repo.mergeInto('side')
+      expect(repo.selected).toBe(WIP)
+    })
+
+    it('names a ref by its short name unless a tag or branch shares it', async () => {
+      const { repo } = await opened()
+      const side = { name: 'side', fullName: 'refs/heads/side', kind: 'local' as const, target: 'c1' }
+      const v1 = { name: 'v1', fullName: 'refs/heads/v1', kind: 'local' as const, target: 'c1' }
+      repo.info = { ...repo.info!, refs: [side, v1, { name: 'v1', fullName: 'refs/tags/v1', kind: 'tag', target: 'c2' }] }
+      expect(repo.revFor(side)).toBe('side')
+      expect(repo.revFor(v1)).toBe('refs/heads/v1')
+    })
+
+    it('closes the rebase dialog when git started the rebase but stopped with an error', async () => {
+      const { repo, w } = await opened()
+      w.gitspynx.readHead = async () => ({ sha: 'a0', branch: 'main' })
+      repo.rebasePlan = { base: 'b0', commits: [] }
+      w.gitspynx.interactiveRebase = async () => {
+        throw new Error('commit-msg hook rejected')
+      }
+      w.gitspynx.openRepo = async () => ({ ...info, operation: 'rebase' })
+      await repo.startRebase([])
+      expect(repo.rebasePlan).toBeNull()
+      expect(repo.error).toMatch(/hook/)
+    })
+
+    it('labels a merge of a full refname with the short branch name', async () => {
+      const { repo, w } = await opened()
+      let sent = ''
+      w.gitspynx.merge = async (_r: string, rev: string) => ((sent = rev), 'ok')
+      let heads = 0
+      w.gitspynx.readHead = async () => ({ sha: heads++ ? 'm1' : 'a0', branch: 'main' })
+      await repo.mergeInto('refs/heads/side')
+      expect(sent).toBe('refs/heads/side')
+      expect(repo.undoLabel).toBe('Merge „side“')
+    })
+
+    it('says which submodules git skipped because of update = none', async () => {
+      const { repo, w } = await opened()
+      w.gitspynx.updateSubmodules = async () => ['deps/lib']
+      await repo.updateSubmodules([])
+      expect(repo.notice).toMatch(/deps\/lib/)
+      expect(repo.notice).toMatch(/update = none/)
+    })
+
+    it('discards hunks after confirming, bottom-up, and not without confirmation', async () => {
+      const { repo, w } = await opened()
+      const sent: number[] = []
+      w.gitspynx.readFileDiff = async () => ({ binary: false, header: [], hunks: [] })
+      w.gitspynx.discardHunk = async (_r: string, sel: { hunk: number }) => void sent.push(sel.hunk)
+      await repo.openDiff({ path: 'f.txt', staged: false })
+      w.gitspynx.confirm = async () => false
+      await repo.discardHunks([{ hunk: 0, hunkHeader: 'a', hunkLines: 'x' }])
+      expect(sent).toEqual([])
+      w.gitspynx.confirm = async () => true
+      await repo.discardHunks([{ hunk: 0, hunkHeader: 'a', hunkLines: 'x', lines: [1] }, { hunk: 2, hunkHeader: 'b', hunkLines: 'y', lines: [0] }])
+      expect(sent).toEqual([2, 0])
+    })
+
+    it('searches commit contents, with re: switching to a regular expression', async () => {
+      const { repo, w } = await opened()
+      const calls: unknown[][] = []
+      w.gitspynx.searchContent = async (...a: unknown[]) => (calls.push(a.slice(2)), ['c1'])
+      expect([...(await repo.searchContent('needle'))!]).toEqual(['c1'])
+      await repo.searchContent('re:need+le')
+      expect(calls).toEqual([['needle', 'text'], ['need+le', 'regex']])
+      expect(await repo.searchContent('re:  ')).toBeNull()
+    })
+
+    it('asks before pruning worktrees', async () => {
+      const { repo, w } = await opened()
+      let pruned = false
+      w.gitspynx.confirm = async () => false
+      w.gitspynx.pruneWorktrees = async () => void (pruned = true)
+      await repo.pruneWorktrees()
+      expect(pruned).toBe(false)
+    })
+
+    it('records a revert and shows the working directory when it conflicts', async () => {
+      const { repo, w } = await opened()
+      let heads = 0
+      w.gitspynx.readHead = async () => ({ sha: heads++ ? 'r1' : 'a0', branch: 'main' })
+      w.gitspynx.revert = async () => 'ok'
+      await repo.revertCommit('c1abcdef')
+      expect(repo.undoLabel).toBe('Revert c1abcde')
+      w.gitspynx.revert = async () => 'conflicts'
+      await repo.revertCommit('c2abcdef')
+      expect(repo.selected).toBe(WIP)
+    })
+
+    it('shows the working directory when a pull stops on conflicts', async () => {
+      const { repo, w } = await opened()
+      w.gitspynx.pull = async () => 'conflicts'
+      await repo.pullBranch('merge')
+      expect(repo.selected).toBe(WIP)
+    })
+
+    it('asks before aborting and keeps everything when declined', async () => {
+      const { repo, w } = await opened()
+      let aborted = false
+      let okLabel = ''
+      w.gitspynx.confirm = async (_m: string, _d: string, ok: string) => ((okLabel = ok), false)
+      w.gitspynx.abortOperation = async () => void (aborted = true)
+      w.gitspynx.readConflict = async () => ({ base: 'b', ours: 'o', theirs: 't', merged: 'm', binary: false })
+      await repo.openConflict('f.txt')
+      await repo.abortOp()
+      expect(aborted).toBe(false)
+      expect(repo.conflict).not.toBeNull() // edits in the conflict view survive a declined abort
+      expect(okLabel).not.toBe('Abbrechen') // must differ from the dialog's cancel button
+    })
+
+    it('resolves a conflict and closes the conflict view', async () => {
+      const { repo, w } = await opened()
+      let resolved: unknown = null
+      w.gitspynx.readConflict = async () => ({ base: 'b', ours: 'o', theirs: 't', merged: 'm' })
+      w.gitspynx.resolveConflict = async (_r: string, path: string, res: unknown) => void (resolved = [path, res])
+      await repo.openConflict('f.txt')
+      expect(repo.conflict?.versions.ours).toBe('o')
+      await repo.resolve({ side: 'theirs' })
+      expect(resolved).toEqual(['f.txt', { side: 'theirs' }])
+      expect(repo.conflict).toBeNull()
+    })
+  })
+
+  describe('stashes', () => {
+    async function opened(stashes: { sha: string }[]) {
+      const repo = useRepo()
+      ;(globalThis as unknown as { window: { gitspynx: Record<string, unknown> } }).window.gitspynx.openRepo = async () => ({ ...info, stashes })
+      const first = repo.open('/r')
+      await flush()
+      logCalls[0].d.resolve(page('c', 3))
+      await first
+      const w = (globalThis as unknown as { window: { gitspynx: Record<string, unknown> } }).window
+      w.gitspynx.readLog = async () => page('c', 3)
+      return { repo, w }
+    }
+
+    it('pops the newest stash from the toolbar', async () => {
+      const { repo, w } = await opened([{ sha: 's1' }, { sha: 's0' }])
+      let call: unknown = null
+      w.gitspynx.stashApply = async (_r: string, sha: string, pop: boolean) => ((call = [sha, pop]), 'ok')
+      await repo.popLatestStash()
+      expect(call).toEqual(['s1', true])
+    })
+
+    it('asks before dropping a stash', async () => {
+      const { repo, w } = await opened([{ sha: 's1' }])
+      let dropped = false
+      w.gitspynx.confirm = async () => false
+      w.gitspynx.stashDrop = async () => void (dropped = true)
+      await repo.dropStash('s1')
+      expect(dropped).toBe(false)
+    })
+
+    it('shows the working directory when applying a stash conflicts', async () => {
+      const { repo, w } = await opened([{ sha: 's1' }])
+      w.gitspynx.stashApply = async () => 'conflicts'
+      await repo.applyStash('s1', false)
+      expect(repo.selected).toBe(WIP)
+    })
+  })
+
+  describe('branch filters', () => {
+    const refs = [
+      { name: 'main', fullName: 'refs/heads/main', kind: 'local', target: 'a0' },
+      { name: 'topic', fullName: 'refs/heads/topic', kind: 'local', target: 't0' },
+      { name: 'origin/main', fullName: 'refs/remotes/origin/main', kind: 'remote', target: 'o0' }
+    ]
+    async function opened() {
+      const repo = useRepo()
+      const w = (globalThis as unknown as { window: { gitspynx: Record<string, unknown> } }).window
+      w.gitspynx.openRepo = async () => ({ ...info, refs, tips: ['a0', 't0', 'o0'] })
+      const first = repo.open('/r')
+      await flush()
+      logCalls[0].d.resolve(page('c', 3))
+      await first
+      const tipsSeen: unknown[] = []
+      w.gitspynx.readLog = async (_r: string, _s: number, _l: number, tips?: string[]) => (tipsSeen.push(tips), page('c', 3))
+      return { repo, tipsSeen }
+    }
+
+    it('hides a branch by reloading history without its tip, keeping HEAD', async () => {
+      const { repo, tipsSeen } = await opened()
+      await repo.toggleHidden('refs/heads/topic')
+      expect(tipsSeen.at(-1)).toEqual(['a0', 'o0'])
+      await repo.toggleHidden('refs/heads/topic')
+      expect(tipsSeen.at(-1)).toBeUndefined() // back to the full snapshot
+    })
+
+    it('solos a branch: only its tip', async () => {
+      const { repo, tipsSeen } = await opened()
+      await repo.toggleSolo('refs/heads/topic')
+      expect(tipsSeen.at(-1)).toEqual(['t0'])
+      await repo.resetFilters()
+      expect(tipsSeen.at(-1)).toBeUndefined()
+    })
+  })
+
+  describe('review 4', () => {
+    const w = () => (globalThis as unknown as { window: { gitspynx: Record<string, unknown> } }).window
+
+    it('caps how many commits a refresh re-reads', async () => {
+      const repo = useRepo()
+      const first = repo.open('/r')
+      await flush()
+      logCalls[0].d.resolve(page('c', 2000))
+      await first
+      repo.commits = page('big', MAX_LOG_PAGE + 5000)
+      let limit = 0
+      w().gitspynx.readLog = async (_r: string, _s: number, l: number) => ((limit = l), page('c', 10))
+      await repo.refresh()
+      expect(limit).toBe(MAX_LOG_PAGE)
+    })
+
+    it('resets branch filters when another repository is opened', async () => {
+      const repo = useRepo()
+      const first = repo.open('/r')
+      await flush()
+      logCalls[0].d.resolve(page('c', 3))
+      await first
+      w().gitspynx.readLog = async () => page('c', 3)
+      await repo.toggleSolo('refs/heads/main')
+      w().gitspynx.openRepo = async () => ({ ...info, path: '/other' })
+      await repo.open('/other')
+      expect(repo.solo).toBeNull()
+      expect(repo.hidden.size).toBe(0)
+    })
+
+    it('hides the upstream together with a local branch', async () => {
+      const repo = useRepo()
+      w().gitspynx.openRepo = async () => ({
+        ...info,
+        refs: [
+          { name: 'topic', fullName: 'refs/heads/topic', kind: 'local', target: 't0', upstream: 'origin/topic' },
+          { name: 'origin/topic', fullName: 'refs/remotes/origin/topic', kind: 'remote', target: 't0' }
+        ]
+      })
+      const first = repo.open('/r')
+      await flush()
+      logCalls[0].d.resolve(page('c', 3))
+      await first
+      w().gitspynx.readLog = async () => page('c', 3)
+      await repo.toggleHidden('refs/heads/topic')
+      expect([...repo.hidden].sort()).toEqual(['refs/heads/topic', 'refs/remotes/origin/topic'])
+      await repo.toggleHidden('refs/heads/topic')
+      expect(repo.hidden.size).toBe(0)
+    })
+
+    it('tells the user that a conflicting pop kept the stash', async () => {
+      const repo = useRepo()
+      const first = repo.open('/r')
+      await flush()
+      logCalls[0].d.resolve(page('c', 3))
+      await first
+      w().gitspynx.readLog = async () => page('c', 3)
+      w().gitspynx.stashApply = async () => 'conflicts'
+      await repo.applyStash('s1', true)
+      expect(repo.notice).toMatch(/Stash wurde behalten/)
+    })
+  })
+
+  describe('review 5', () => {
+    const w = () => (globalThis as unknown as { window: { gitspynx: Record<string, unknown> } }).window
+
+    it('does not expose an incoming tab\'s filters before its history has loaded', async () => {
+      const repo = useRepo()
+      const first = repo.open('/r')
+      await flush()
+      logCalls[0].d.resolve(page('c', 3))
+      await first
+      w().gitspynx.openRepo = async (p: string) => ({ ...info, path: p, refs: [{ name: 'topic', fullName: 'refs/heads/topic', kind: 'local', target: 'b0' }] })
+      const switching = repo.open('/b', 0, { selected: null, hidden: [], solo: 'refs/heads/topic' })
+      await flush()
+      expect(repo.viewState().solo).toBeNull() // still /r's view while /b loads
+      logCalls[1].d.resolve(page('b', 3))
+      await switching
+      expect(repo.solo).toBe('refs/heads/topic')
+    })
+
+    it('keeps the error of a background operation for its tab and shows it on return', async () => {
+      const repo = useRepo()
+      const first = repo.open('/r')
+      await flush()
+      logCalls[0].d.resolve(page('c', 3))
+      await first
+      const fetch = deferred<void>()
+      w().gitspynx.fetch = () => fetch.promise
+      const running = repo.fetchAll()
+      await flush()
+      w().gitspynx.openRepo = async (p: string) => ({ ...info, path: p })
+      w().gitspynx.readLog = async () => page('b', 3)
+      await repo.open('/b')
+      ;(fetch as unknown as { resolve: (v: unknown) => void }).resolve(Promise.reject(new Error('network down')))
+      await running
+      expect(repo.error).toBeNull()
+      expect(repo.backgroundErrors.get('/r')).toBe('network down')
+      await repo.open('/r')
+      expect(repo.error).toBe('network down')
+      expect(repo.backgroundErrors.has('/r')).toBe(false)
+    })
+
+    it('scopes a running network operation to its repository', async () => {
+      const repo = useRepo()
+      const first = repo.open('/r')
+      await flush()
+      logCalls[0].d.resolve(page('c', 3))
+      await first
+      const fetch = deferred<void>()
+      w().gitspynx.fetch = () => fetch.promise
+      const running = repo.fetchAll()
+      await flush()
+      expect(repo.busy).toBe('fetch')
+      w().gitspynx.openRepo = async (p: string) => ({ ...info, path: p })
+      w().gitspynx.readLog = async () => page('b', 3)
+      await repo.open('/b')
+      expect(repo.busy).toBeNull() // /b is not busy
+      ;(fetch as unknown as { resolve: (v: unknown) => void }).resolve(Promise.reject(new Error('network down')))
+      await running
+      expect(repo.error).toBeNull() // /r's failure is not shown on /b
+    })
+  })
+
+  describe('state after reloads', () => {
+    const w = () => (globalThis as unknown as { window: { gitspynx: Record<string, unknown> } }).window
+    async function opened(extra: Partial<RepoInfo> = {}) {
+      w().gitspynx.openRepo = async () => ({ ...info, ...extra })
+      w().gitspynx.readLog = async () => page('c', 3)
+      w().gitspynx.readCommit = async (_r: string, sha: string) => ({ sha })
+      const repo = useRepo()
+      await repo.open('/r')
+      return repo
+    }
+
+    it('drops a solo filter whose branch was deleted', async () => {
+      const repo = await opened({ refs: [{ name: 'x', fullName: 'refs/heads/x', kind: 'local', target: 'c1' }] })
+      await repo.toggleSolo('refs/heads/x')
+      w().gitspynx.openRepo = async () => info
+      await repo.refresh()
+      expect(repo.solo).toBeNull()
+    })
+
+    it('deselects a stash that is gone after a reload', async () => {
+      const stash = { sha: 's1', parents: ['c0'], author: 'a', email: 'a@x', date: 0, subject: 'On main: wip' }
+      const repo = await opened({ stashes: [stash] })
+      await repo.select('s1')
+      w().gitspynx.openRepo = async () => info
+      await repo.refresh()
+      expect(repo.selected).toBeNull()
+      expect(repo.detail).toBeNull()
+    })
+
+    it('clears an error from a background reload once a later one succeeds', async () => {
+      const repo = await opened()
+      w().gitspynx.readStatus = async () => {
+        throw new Error('index.lock exists')
+      }
+      await repo.refreshStatus()
+      expect(repo.error).toMatch(/index.lock/)
+      w().gitspynx.readStatus = async () => []
+      await repo.refreshStatus()
+      expect(repo.error).toBeNull()
+    })
+
+    it('stops loading everything when another repository is shown', async () => {
+      const repo = await opened()
+      let bPages = 0
+      w().gitspynx.readLog = async (r: string) => (r === '/b' && bPages++, page(r === '/b' ? 'b' : 'c'))
+      w().gitspynx.openRepo = async (p: string) => ({ ...info, path: p })
+      const reload = repo.refresh()
+      const all = repo.loadAll() // waits for the reload
+      await repo.open('/b')
+      await Promise.all([reload, all])
+      expect(bPages).toBe(1) // only the first page of the newly shown repository
+    })
+
+    it('keeps an error message across background reloads', async () => {
+      const repo = await opened()
+      repo.error = 'push rejected'
+      await repo.refresh(true)
+      await repo.refreshStatus()
+      expect(repo.error).toBe('push rejected')
+    })
+
+    it('explains an edit stop after starting the rebase', async () => {
+      const repo = await opened()
+      w().gitspynx.readHead = async () => ({ sha: 'a0', branch: 'main' })
+      repo.rebasePlan = { base: 'b0', commits: [] }
+      w().gitspynx.interactiveRebase = async () => 'ok'
+      w().gitspynx.openRepo = async () => ({ ...info, operation: 'rebase' }) // stopped at the edit step
+      await repo.startRebase([{ sha: 'c1', action: 'edit' }])
+      expect(repo.rebasePlan).toBeNull()
+      expect(repo.notice).toMatch(/angehalten/i)
+    })
+
+    it('keeps the rebase plan open when git refuses it', async () => {
+      const repo = await opened()
+      w().gitspynx.readHead = async () => ({ sha: 'a0', branch: 'main' })
+      repo.rebasePlan = { base: 'b0', commits: [] }
+      w().gitspynx.interactiveRebase = async () => {
+        throw new Error('an operation is in progress')
+      }
+      await repo.startRebase([])
+      expect(repo.rebasePlan).not.toBeNull()
+      w().gitspynx.interactiveRebase = async () => 'ok'
+      await repo.startRebase([])
+      expect(repo.rebasePlan).toBeNull()
+    })
+  })
+
+  it('shows a recently shown repository at once from memory while it reloads', async () => {
+    const w = (globalThis as unknown as { window: { gitspynx: Record<string, unknown> } }).window
+    w.gitspynx.openRepo = async (p: string) => ({ ...info, path: p })
+    w.gitspynx.readLog = async (r: string) => page(r === '/r' ? 'r' : 'b', 3)
+    const repo = useRepo()
+    await repo.open('/r')
+    const shownR = repo.commits
+    await repo.open('/b')
+    const slow = deferred<Commit[]>()
+    w.gitspynx.readLog = () => slow.promise // the reload of /r is still running …
+    const back = repo.open('/r')
+    await flush()
+    expect(repo.info?.path).toBe('/r') // … but /r is already shown
+    expect(repo.commits).toBe(shownR)
+    slow.resolve(page('r', 3))
+    await back
+    expect(repo.commits).toBe(shownR) // unchanged history: same list
+  })
+
+  describe('refresh of a long history', () => {
+    const w = () => (globalThis as unknown as { window: { gitspynx: Record<string, unknown> } }).window
+    it('keeps everything that was loaded, beyond one maximal page', async () => {
+      const all = page('h', MAX_LOG_PAGE + 3000)
+      w().gitspynx.readLog = async (_r: string, skip: number, limit: number) => all.slice(skip, skip + limit)
+      const repo = useRepo()
+      await repo.open('/r')
+      await repo.loadAll()
+      expect(repo.commits.length).toBe(MAX_LOG_PAGE + 3000)
+      await repo.refresh(true)
+      expect(repo.commits.length).toBe(MAX_LOG_PAGE + 3000)
+    })
+
+    it('loads everything in large pages (each page walks the whole history without a commit-graph)', async () => {
+      const all = page('p', 120_000)
+      const limits: number[] = []
+      w().gitspynx.readLog = async (_r: string, skip: number, limit: number) => (limits.push(limit), all.slice(skip, skip + limit))
+      const repo = useRepo()
+      await repo.open('/r')
+      await repo.loadAll()
+      expect(repo.commits.length).toBe(120_000)
+      expect(limits.slice(1)).toEqual([MAX_LOG_PAGE, MAX_LOG_PAGE, MAX_LOG_PAGE])
+    })
+
+    it('keeps the same commit list (no new layout) when the history did not change', async () => {
+      w().gitspynx.readLog = async (_r: string, skip: number, limit: number) => page('s', 3000).slice(skip, skip + limit)
+      const repo = useRepo()
+      await repo.open('/r')
+      const before = repo.commits
+      const layout = repo.graph
+      await repo.refresh(true)
+      expect(repo.commits).toBe(before)
+      expect(repo.graph).toBe(layout)
+    })
+  })
+
+  it('loadAll waits for a refresh that is in flight instead of stopping', async () => {
+    const repo = useRepo()
+    const first = repo.open('/r')
+    await flush()
+    logCalls[0].d.resolve(page('a'))
+    await first
+    const reload = repo.refresh()
+    await flush()
+    const all = repo.loadAll()
+    await flush()
+    logCalls[1].d.resolve(page('a'))
+    await reload
+    await flush()
+    expect(logCalls[2]?.skip).toBe(2000)
+    logCalls[2].d.resolve(page('b', 5))
+    await all
+    expect(repo.complete).toBe(true)
+  })
+
+  describe('undo/redo', () => {
+    const w = () => (globalThis as unknown as { window: { gitspynx: Record<string, unknown> } }).window
+    let head = 'a0'
+    let applied: unknown[][]
+
+    async function opened() {
+      head = 'a0'
+      applied = []
+      w().gitspynx.openRepo = async () => ({ ...info, head: { branch: 'main', sha: head } })
+      w().gitspynx.readHead = async () => ({ sha: head, branch: 'main' })
+      w().gitspynx.readLog = async () => page('c', 3)
+      w().gitspynx.commit = async () => void (head = 'b1')
+      w().gitspynx.applyUndo = async (_r: string, steps: unknown[]) => {
+        applied.push(steps)
+        const last = steps.at(-1) as { type: string; to?: string }
+        if (last.type === 'reset') head = last.to!
+      }
+      const repo = useRepo()
+      await repo.open('/r')
+      return repo
+    }
+
+    it('records a merge finished via Continue', async () => {
+      const repo = await opened()
+      repo.info!.operation = 'merge'
+      w().gitspynx.continueOperation = async () => ((head = 'm1'), 'ok')
+      await repo.continueOp()
+      expect(repo.undoLabel).toBe('Merge abschließen')
+    })
+
+    it('does not call a commit pushed when its upstream is gone', async () => {
+      const repo = await opened()
+      await repo.commit('Add feature', false)
+      repo.info = { ...repo.info!, refs: [{ name: 'main', fullName: 'refs/heads/main', kind: 'local', target: 'b1', upstream: 'origin/main', upstreamGone: true, ahead: 0, behind: 0 }] }
+      let asked = false
+      w().gitspynx.confirm = async () => ((asked = true), false)
+      await repo.undo()
+      expect(asked).toBe(false)
+    })
+
+    it('records a rebase finished via Continue and undoes it back to where it started', async () => {
+      const repo = await opened()
+      repo.info = { ...repo.info!, operation: 'rebase' }
+      let done = false // after Continue git has no rebase state any more
+      w().gitspynx.readRebaseState = async () => (done ? null : { branch: 'main', origHead: 'o1' })
+      w().gitspynx.continueOperation = async () => ((head = 'n1'), (done = true), 'ok')
+      await repo.continueOp()
+      expect(repo.undoLabel).toBe('Rebase abschließen')
+      await repo.undo()
+      expect(applied.at(-1)).toEqual([{ type: 'reset', expect: 'n1', to: 'o1', mode: 'keep', branch: 'main' }])
+    })
+
+    it('records the finished rebase even when the shown state still says rebase (watcher reload in between)', async () => {
+      const repo = await opened()
+      repo.info = { ...repo.info!, operation: 'rebase' }
+      let done = false
+      w().gitspynx.readRebaseState = async () => (done ? null : { branch: 'main', origHead: 'o1' })
+      w().gitspynx.continueOperation = async () => ((head = 'n1'), (done = true), 'ok')
+      w().gitspynx.openRepo = async () => ({ ...info, head: { branch: 'main', sha: head }, operation: 'rebase' }) // stale view
+      await repo.continueOp()
+      expect(repo.undoLabel).toBe('Rebase abschließen')
+    })
+
+    it('asks before undoing a commit that is already pushed', async () => {
+      const repo = await opened()
+      await repo.commit('Add feature', false)
+      repo.info!.refs = [{ name: 'main', fullName: 'refs/heads/main', kind: 'local', target: 'b1', upstream: 'origin/main', ahead: 0, behind: 0 }]
+      let asked = ''
+      w().gitspynx.confirm = async (m: string) => ((asked = m), false)
+      await repo.undo()
+      expect(asked).toMatch(/gepusht/)
+      expect(applied).toEqual([])
+    })
+
+    it('records a commit and undoes / redoes it with a soft reset', async () => {
+      const repo = await opened()
+      await repo.commit('Add feature\n\nbody', false)
+      expect(repo.undoLabel).toBe('Commit „Add feature“')
+      await repo.undo()
+      expect(applied.at(-1)).toEqual([{ type: 'reset', expect: 'b1', to: 'a0', mode: 'soft', branch: 'main' }])
+      expect(repo.undoLabel).toBeNull()
+      expect(repo.redoLabel).toBe('Commit „Add feature“')
+      await repo.redo()
+      expect(applied.at(-1)).toEqual([{ type: 'reset', expect: 'a0', to: 'b1', mode: 'soft', branch: 'main' }])
+      expect(repo.undoLabel).toBe('Commit „Add feature“')
+    })
+
+    it('drops the redo history when a new action is recorded', async () => {
+      const repo = await opened()
+      await repo.commit('one', false)
+      await repo.undo()
+      w().gitspynx.commit = async () => void (head = 'c2')
+      await repo.commit('two', false)
+      expect(repo.redoLabel).toBeNull()
+    })
+
+    it('records from git even when a newer reload overtook the action\'s own', async () => {
+      const repo = await opened()
+      w().gitspynx.openRepo = async () => ({ ...info, head: { branch: 'main', sha: 'a0' } }) // stale store view
+      await repo.commit('one', false)
+      expect(repo.undoLabel).toBe('Commit „one“')
+    })
+
+    it('keeps an entry whose undo failed only temporarily', async () => {
+      const repo = await opened()
+      await repo.commit('one', false)
+      w().gitspynx.applyUndo = async () => {
+        throw new Error('error: Entry a.txt not uptodate. Cannot merge.')
+      }
+      await repo.undo()
+      expect(repo.error).toMatch(/not uptodate/)
+      expect(repo.undoLabel).toBe('Commit „one“')
+    })
+
+    it('forgets an entry whose undo was refused', async () => {
+      const repo = await opened()
+      await repo.commit('one', false)
+      w().gitspynx.applyUndo = async () => {
+        throw new Error('the repository changed since this action — it cannot be undone')
+      }
+      await repo.undo()
+      expect(repo.error).toMatch(/cannot be undone/)
+      expect(repo.undoLabel).toBeNull()
+      expect(repo.redoLabel).toBeNull()
+    })
+  })
+
+  it('shows the error of a failed repository operation after the reload', async () => {
+    const w = (globalThis as unknown as { window: { gitspynx: Record<string, unknown> } }).window
+    w.gitspynx.openRepo = async () => info
+    w.gitspynx.readLog = async () => page('c', 3)
+    w.gitspynx.checkout = async () => {
+      throw new Error("error: Your local changes would be overwritten by checkout")
+    }
+    const repo = useRepo()
+    await repo.open('/r')
+    await repo.checkoutBranch('other')
+    expect(repo.error).toMatch(/would be overwritten/)
+  })
+
+  describe('worktrees', () => {
+    const w = () => (globalThis as unknown as { window: { gitspynx: Record<string, unknown> } }).window
+    async function opened(confirms: boolean[], dirty: boolean) {
+      w().gitspynx.openRepo = async () => info
+      w().gitspynx.readLog = async () => page('c', 3)
+      w().gitspynx.confirm = async () => confirms.shift() ?? false
+      const calls: [string, boolean][] = []
+      w().gitspynx.removeWorktree = async (_r: string, path: string, force: boolean) => {
+        calls.push([path, force])
+        if (dirty && !force) throw new Error("fatal: '/wt' contains modified or untracked files, use --force to delete it")
+      }
+      const repo = useRepo()
+      await repo.open('/r')
+      return { repo, calls }
+    }
+
+    it('asks before removing a work tree', async () => {
+      const { repo, calls } = await opened([false], false)
+      expect(await repo.removeWorktree('/wt')).toBe(false)
+      expect(calls).toEqual([])
+    })
+
+    it('asks again and forces when the work tree has local changes', async () => {
+      const { repo, calls } = await opened([true, true], true)
+      expect(await repo.removeWorktree('/wt')).toBe(true)
+      expect(calls).toEqual([['/wt', false], ['/wt', true]])
+      expect(repo.error).toBeNull()
+    })
+  })
+
+  describe('submodules', () => {
+    const w = () => (globalThis as unknown as { window: { gitspynx: Record<string, unknown> } }).window
+    async function opened(confirm: boolean) {
+      w().gitspynx.openRepo = async () => ({
+        ...info,
+        submodules: [
+          { path: 'a', sha: '1', state: 'modified' },
+          { path: 'b', sha: '2', state: 'ok' }
+        ]
+      })
+      w().gitspynx.readLog = async () => page('c', 3)
+      w().gitspynx.confirm = async () => confirm
+      const calls: string[][] = []
+      w().gitspynx.updateSubmodules = async (_r: string, paths: string[]) => (calls.push(paths), [])
+      const repo = useRepo()
+      await repo.open('/r')
+      return { repo, calls }
+    }
+
+    it('asks before resetting a submodule that has another commit checked out', async () => {
+      const { repo, calls } = await opened(false)
+      await repo.updateSubmodules(['a'])
+      await repo.updateSubmodules()
+      expect(calls).toEqual([])
+    })
+
+    it('updates without asking when nothing would be reset', async () => {
+      const { repo, calls } = await opened(false)
+      await repo.updateSubmodules(['b'])
+      expect(calls).toEqual([['b']])
+    })
+  })
+})

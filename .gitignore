@@ -1,2 +1,7 @@
 .work/
 .DS_Store
+.superpowers/
+node_modules/
+out/
+dist/
+.vitest/
